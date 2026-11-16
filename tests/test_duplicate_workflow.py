@@ -288,6 +288,9 @@ class DialogTests(unittest.TestCase):
         self.dialog.start()
         self.assertEqual(len(self.remote.dispatched), 1)
         self.assertTrue(self.dialog.locked and self.dialog.poll_timer)
+        from sentinel_app.desktop_theme import COLORS
+        self.dialog.mode_bar.render()  # Drawn while the run is going (a theme refresh, say): greyed out.
+        self.assertEqual(self.dialog.mode_bar.items["scan"].cget("fg"), COLORS["disabled"])
         self.dialog.poll()  # Still running: it checks again later.
         self.assertIn("Running", self.dialog.notice.get())
         self.remote.run = dict(status="completed", conclusion="success")
@@ -305,6 +308,8 @@ class DialogTests(unittest.TestCase):
                              ["rule-duplicates-run12.csv", "rule-duplicates-run12.docx", "rule-duplicates-run12.xlsx"])
             self.assertTrue(zipfile.is_zipfile(Path(folder) / "rule-duplicates-run12.docx"))
         self.assertIn("Saved rule-duplicates-run12.csv", self.dialog.notice.get())
+        # Once the run has finished, the mode switch looks usable again, not greyed out as while it ran.
+        self.assertNotEqual(self.dialog.mode_bar.items["scan"].cget("fg"), COLORS["disabled"])
         self.assertEqual(self.dialog.banner.action_button.cget("text"), "Open Word report")
         self.assertIn("a Word report, rule-duplicates.docx", self.dialog.result_text.get())
         # If the Word report can't be made, the run's own reports are still saved, and the dialog says so.
