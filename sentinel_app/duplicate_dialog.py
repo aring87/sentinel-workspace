@@ -291,6 +291,7 @@ class DuplicateDialog(ClientPicker):
                        self.all_rules_button, self.choose_button):
             widget.configure(state="normal" if editable else "disabled")
         self.similarity_box.configure(state="readonly" if editable else "disabled")
+        self.mode_bar.render()  # It only redraws itself when the mode changes; locking and unlocking don't.
         self.prepare_button.configure(state="normal" if editable else "disabled",
                                       text="Check again" if self.record and not self.record["attempted"] else "Check")
         startable = bool(self.record and not self.record["attempted"] and not self.locked and not busy)
