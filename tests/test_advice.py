@@ -54,7 +54,7 @@ class AdviceTests(unittest.TestCase):
     def test_a_moved_library_rule_points_at_where_it_will_be_saved(self):
         tip = lookup("The original repository rule is missing or the destination changed. Start a new draft for a new rule.")
         self.assertIn("Where it will be saved", tip)
-        self.assertIn("Library ⋯", lookup("The catalog is incomplete or invalid"))
+        self.assertIn("Library ▾", lookup("The catalog is incomplete or invalid"))
 
     def test_review_dialog_keeps_its_old_import(self):
         from sentinel_app import rule_review_dialog

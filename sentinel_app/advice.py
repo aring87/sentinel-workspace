@@ -60,7 +60,7 @@ FRIENDLY = (
      "Your GitHub account can view the rule library but cannot submit to it. Ask a repository admin for write access."),
     ("catalog is incomplete or invalid",
      "Submissions are paused because some library files have problems. Ask an engineer to check "
-     "Rules > Rule library > Library ⋯ > Library issues."),
+     "Rules > Rule library > Library ▾ > Library issues."),
     ("no file changes to submit",
      "Nothing has changed compared with the library version of this rule."),
     ("repository changed after preview",

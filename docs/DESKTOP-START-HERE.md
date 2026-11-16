@@ -80,11 +80,39 @@ or double-click it, to open it in the Rule builder. **Assign to clients…** and
 and deploy…** sit above the list and in the right-click menu of a rule. Ctrl-click or
 Shift-click selects several rules: **Assign N rules to clients…** then assigns them all in
 one request (up to 50), at the rule state you choose; editing and previews take one rule at
-a time. **Library issues**, **Open saved assignment…** and
-**Preview & deployment history…** are in the **Library ⋯** menu on the Rule library card.
+a time. **Library issues**, **Find duplicate rules…**, **Open saved assignment…** and
+**Preview & deployment history…** are in the **Library ▾** menu on the Rule library card.
 In the client lists of those dialogs, Space ticks or clears a client. The history lists
 request and check times in your local time; point at a time to see it in UTC, as the
 receipts store it.
+
+**Find duplicates…** (after **Preview and deploy…** when the row has room; always in the
+**Library ▾** menu as **Find duplicate rules…**) runs the library's duplicate workflow
+(`.github/workflows/sentinel-rule-duplicates.yml`) on GitHub across the clients you tick (every
+enabled client to start with). The workflow signs in with the pipeline's identity, so it reads
+each client's workspace without you signing in to it, and its results match a run started
+from GitHub. Choose what to run:
+
+| Run | What it does |
+|---|---|
+| **Scan workspaces** | Read-only. Groups the rules in each workspace that look like copies of each other (same name, same template or a similar query), whether or not the library manages them. |
+| **Audit library rules** | Read-only. Lists workspace rules that copy the library rules assigned to each client, and what Disable duplicates would do with each. With rules selected in the Rule library, only those. |
+| **Preview disabling** | Read-only dry run of Disable duplicates for the rules selected in the Rule library. |
+| **Disable duplicates** | Disables (never deletes) those copies. It asks you first, and GitHub asks for approval of the production environment before the run changes anything. |
+
+**Query similarity** (90% to start with) sets how alike two queries must be to count as copies;
+**Other names** adds older display names to treat as copies, separated by semicolons. Select
+**Check**: the app reads the library and the workflow on GitHub and shows exactly what the run
+will do, then **Start run** starts it. The dialog follows the run every 15 seconds (it says
+when the run is waiting for approval) and, once it finishes, downloads its reports and lists
+them with the report's colours: amber for a copy that would be disabled, green for one this run
+disabled, red for a failure (or, in a scan, a group with more than one enabled rule), blue for
+a similar-query match to review, grey for skipped or already disabled. **Save reports…**
+saves the run's CSV and its colour-coded Excel report (summary sheet, colour key and per-client
+counts) to the folder you choose, named after the run (for example
+`rule-duplicates-run42.xlsx`), and never over an existing file. **New check** brings the choices
+back. Each run started is saved on this PC, so **Show last run** reopens it after you close the
+dialog. GitHub keeps the reports for 14 days.
 
 **Drift** compares the two for the connected client, using only what the other two views
 have read: it starts no Azure or GitHub read of its own. It finds the client target in the

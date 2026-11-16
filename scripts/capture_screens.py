@@ -43,6 +43,8 @@ from sentinel_app.gov_onboarding_dialog import GovOnboardingDialog  # noqa: E402
 from sentinel_app.rule_review_dialog import ReviewDialog  # noqa: E402
 from sentinel_app.assignment_dialog import AssignmentDialog  # noqa: E402
 from sentinel_app.preview_dialog import PreviewDialog  # noqa: E402
+from sentinel_app.duplicate_dialog import DuplicateDialog  # noqa: E402
+from sentinel_app import duplicate_workflow  # noqa: E402
 from sentinel_app.workflow_history_dialog import WorkflowHistoryDialog  # noqa: E402
 from sentinel_app.review_history import ReviewHistoryDialog  # noqa: E402
 from test_desktop import WORKSPACE, TENANT, SUB, WS  # noqa: E402
@@ -183,6 +185,28 @@ def library():
     snapshot.update(repository="isi-security/detection-as-code", private=True, can_push=True,
                     loaded_at="2026-11-02T14:20:00Z", source="isi-security/detection-as-code / main")
     return snapshot
+
+
+def duplicate_report():
+    """A finished audit run's reports, as the duplicate workflow uploads them (the CSV the script writes)."""
+    import csv, io
+    rows = [("acme-primary", "brute-force", "Brute force against Entra ID accounts (old)", True, "name+similar", "0.97", "disable"),
+            ("acme-primary", "brute-force", "Brute Force Against Entra ID Accounts", False, "name", "", "already disabled"),
+            ("acme-primary", "impossible-travel", "Impossible travel - copy", True, "similar", "0.92", "review: similar query only"),
+            ("acme-primary", "mfa-fatigue", "MFA fatigue push notifications", True, "name", "", "skip: repo rule missing here"),
+            ("bluestone-primary", "brute-force", "Entra brute force (Content hub)", True, "template", "", "disable"),
+            ("bluestone-primary", "brute-force", "Brute force against Entra ID accounts", True, "name+similar", "1.00",
+             "skip: enabled repo rule, change it in git")]
+    out = io.StringIO(newline="")
+    writer = csv.DictWriter(out, fieldnames=duplicate_workflow.FIELDS); writer.writeheader()
+    for index, (target, slug, name, enabled, match, similarity, action) in enumerate(rows):
+        writer.writerow(dict(target=target, repo_rule="rules/sentinel/" + slug + ".yml", repo_rule_id="r1",
+                             repo_copy="enabled", dup_rule_id=f"{index:08x}-0000-4000-8000-000000000000", dup_name=name,
+                             dup_enabled=str(enabled), dup_managed_by="rules/sentinel/x.yml" if "git" in action else "",
+                             match=match, similarity=similarity, action=action))
+    files = {"rule-duplicates.csv": out.getvalue().encode(), "rule-duplicates.xlsx": b""}
+    name, parsed = duplicate_workflow.main_report(files)
+    return dict(files=files, name=name, artifact="duplicate-reports-audit-42", **parsed)
 
 
 class Session:
@@ -350,6 +374,11 @@ def main():
     row = cat.visible[0]
     assign = AssignmentDialog(app, cat.snapshot, row); shot(assign.window, "21-dialog-assign"); assign.window.destroy()
     preview = PreviewDialog(app, cat.snapshot, row); shot(preview.window, "22-dialog-preview"); preview.window.destroy()
+    # Find duplicates: the library's duplicate workflow on GitHub, then the report it uploads.
+    duplicates = DuplicateDialog(app, cat.snapshot, [row]); shot(duplicates.window, "22b-dialog-duplicates")
+    duplicates.reports = dict(duplicate_report(), mode="audit", run_number=42); duplicates.show_results()
+    duplicates.say("Run #42 finished. Save reports keeps the CSV and the colour-coded Excel report.", "success")
+    shot(duplicates.window, "22c-dialog-duplicates-results"); duplicates.close()
     history = WorkflowHistoryDialog(app); settle(root, 800); shot(history.window, "23-dialog-history"); history.window.destroy()
 
     # ---- Rules: drift between the library's acme target and the workspace rules read above
