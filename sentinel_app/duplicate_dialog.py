@@ -14,6 +14,7 @@ import webbrowser
 from . import ui_kit as kit
 from .assignment_dialog import ClientPicker, reveal
 from .desktop_theme import COLORS, px
+from . import brand, duplicate_report, org_logo
 from . import duplicate_workflow as dupes
 from .duplicate_workflow import DuplicateService, WORKFLOW
 
@@ -90,7 +91,8 @@ class DuplicateDialog(ClientPicker):
         self.actions.pack(side="bottom", fill="x", pady=(px(14), 0))
         (self.save_button, self.start_button, self.prepare_button, self.close_button,
          self.status_button, self.open_button, self.last_button) = buttons
-        kit.tooltip(self.save_button, "Save the run's CSV and colour-coded Excel reports to a folder")
+        kit.tooltip(self.save_button, "Save the run's CSV and colour-coded Excel reports, and a Word report of the "
+                                      "findings, to a folder")
         kit.tooltip(self.last_button, "Open the last run started from this PC, and its reports")
         self.notice = tk.StringVar()
         self.banner = kit.Banner(body, self.notice); self.banner.pack(side="bottom", fill="x", pady=(px(10), 0))
@@ -433,7 +435,8 @@ class DuplicateDialog(ClientPicker):
                               image=kit.dot(dupes.tone(kind, row), self.table))
         others = sorted(name for name in reports["files"] if name != reports["name"])
         text = MODE_LABELS[reports["mode"]] + ": " + dupes.summary(kind, rows, reports["mode"])
-        text += " Save reports saves " + " and ".join([reports["name"]] + others) + "."
+        text += (" Save reports saves " + ", ".join([reports["name"]] + others) + " and a Word report, "
+                 + duplicate_report.file_name(reports) + ".")
         self.result_text.set(text)
         if rows: self.table_empty.hide()
         else: self.table_empty.show("Nothing to list: no duplicates found.")
@@ -448,15 +451,37 @@ class DuplicateDialog(ClientPicker):
         folder = filedialog.askdirectory(parent=self.window, title="Save the duplicate reports",
                                          initialdir=str(downloads()), mustexist=True)
         if not folder: return
+        files, problem = dict(self.reports["files"]), None
+        try:  # The Word report is made here, from the rows shown; the run's own files are saved even if it fails.
+            files[duplicate_report.file_name(self.reports)] = duplicate_report.build(
+                self.reports, self.record, logo=brand.render_png(96), org_logo=self.organization_logo())
+        except Exception as error:
+            problem = str(error) or type(error).__name__
+            self.app.log("Duplicate rules: couldn't make the Word report: " + problem)
         try:
-            saved = dupes.save_reports(self.reports["files"], folder, self.reports.get("run_number"))
+            saved = dupes.save_reports(files, folder, self.reports.get("run_number"))
         except (OSError, ValueError) as error:
             self.say("Couldn't save the reports: " + str(error), "danger"); return
         names = ", ".join(path.name for path in saved)
         self.app.log("Duplicate rules: saved " + names + " to " + folder)
         opener = getattr(os, "startfile", None)
-        self.say(f"Saved {names} to {folder}.", "success",
-                 ("Open folder", lambda: opener(folder)) if opener else None)
+        word = next((path for path in saved if path.suffix == ".docx"), None)
+        if problem:
+            self.say(f"Saved {names} to {folder}, but the Word report couldn't be made: {problem}", "warning",
+                     ("Open folder", lambda: opener(folder)) if opener else None)
+        else:
+            self.say(f"Saved {names} to {folder}.", "success",
+                     ("Open Word report", lambda: opener(str(word))) if opener and word else None)
+
+    def organization_logo(self):
+        """The organization's logo for the Word report (the largest of desktop-data/branding's set), or None."""
+        sizes = org_logo.sizes(self.app.rule_builder.data_dir / org_logo.FOLDER)
+        if not sizes: return None
+        try:
+            data = sizes[max(sizes)].read_bytes()
+        except OSError:
+            return None
+        return data if len(data) <= org_logo.MAX_BYTES and data[:8] == bytes.fromhex("89504e470d0a1a0a") else None
 
     # ------------------------------------------------------------- other
     def open_run(self):

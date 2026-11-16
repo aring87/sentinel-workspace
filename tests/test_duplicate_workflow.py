@@ -302,8 +302,19 @@ class DialogTests(unittest.TestCase):
             with patch("sentinel_app.duplicate_dialog.filedialog.askdirectory", return_value=folder):
                 self.dialog.save_reports()
             self.assertEqual(sorted(p.name for p in Path(folder).iterdir()),
-                             ["rule-duplicates-run12.csv", "rule-duplicates-run12.xlsx"])
+                             ["rule-duplicates-run12.csv", "rule-duplicates-run12.docx", "rule-duplicates-run12.xlsx"])
+            self.assertTrue(zipfile.is_zipfile(Path(folder) / "rule-duplicates-run12.docx"))
         self.assertIn("Saved rule-duplicates-run12.csv", self.dialog.notice.get())
+        self.assertEqual(self.dialog.banner.action_button.cget("text"), "Open Word report")
+        self.assertIn("a Word report, rule-duplicates.docx", self.dialog.result_text.get())
+        # If the Word report can't be made, the run's own reports are still saved, and the dialog says so.
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("sentinel_app.duplicate_dialog.filedialog.askdirectory", return_value=folder), \
+                    patch("sentinel_app.duplicate_dialog.duplicate_report.build", side_effect=ValueError("broken")):
+                self.dialog.save_reports()
+            self.assertEqual(sorted(p.name for p in Path(folder).iterdir()),
+                             ["rule-duplicates-run12.csv", "rule-duplicates-run12.xlsx"])
+        self.assertIn("the Word report couldn't be made: broken", self.dialog.notice.get())
 
     def test_disable_without_rules_says_how_and_disable_apply_asks_first(self):
         self.dialog.mode.set("disable-preview")
