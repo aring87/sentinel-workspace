@@ -34,7 +34,8 @@ lighthouse-onboard.isi.json
 # Local deployment receipts include private client selections and preview evidence
 *.deployment.json
 
-# Packaged exe build output
+# Packaged exe build output, and the copy Build-Exe.cmd puts beside desktop-data
 build/
 dist/
+/Sentinel Workspace.exe
 *.spec
