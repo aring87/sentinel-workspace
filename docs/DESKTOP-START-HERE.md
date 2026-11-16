@@ -171,7 +171,20 @@ file or a draft file from disk. When a rule file's ID matches a rule in the libr
 file is linked to that rule and submitted as an update.
 
 Work through the five steps — Basics, Query & schedule, MITRE ATT&CK, Advanced and
-Review. Run every and Look back are entered as a number and a unit. The pill beside the
+Review. Run every and Look back are entered as a number and a unit. On MITRE ATT&CK, tick
+the tactics, then tick techniques in the list under them instead of typing IDs: it holds
+every ATT&CK Enterprise and ICS technique at the version Sentinel is aligned to (13.1), each
+parent with its sub-techniques under it; ICS ones are marked (ICS), as some names are in both
+(Masquerading is T1036 and, for ICS, T0849). Ticking a parent opens it and tints its
+sub-techniques; ticking a sub-technique ticks its parent too, as Sentinel needs. Search by ID
+or name ("ics" lists the ICS ones), and **Only the tactics ticked above** narrows the list.
+An ID the list doesn't hold, such as a retired one (T1086 PowerShell, now T1059.001), is kept
+and named under the list, with **Remove** and, for retired IDs, **Use the new IDs**; type a
+whole ID the list lacks into the search and **Add** keeps it as typed. An ID in the wrong field,
+or a sub-technique whose parent isn't ticked (from an older draft or file), is named there
+too, and **Fix these** puts it right. To move the list to a
+newer ATT&CK version when Sentinel does, run `py scripts\update_attack_catalog.py` with its
+`SENTINEL_VERSION` changed. The pill beside the
 title shows whether the draft is new, saved, has unsaved changes, has been checked or has
 been submitted. **Save draft** (Ctrl+S) keeps the draft under its rule name in
 `desktop-data/drafts` without asking for a file name. **Check rule** checks the repository

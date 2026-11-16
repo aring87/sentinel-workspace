@@ -19,6 +19,7 @@ from .gov_onboarding import GOV_CLOUD
 from .kql_editor import KqlEditor, fix_label
 from .lighthouse_onboarding import Stop
 from .rule_review_dialog import ReviewDialog
+from .technique_picker import TechniquePicker
 from .repository_catalog import GitHubReader
 from .repository_reviews import load_request
 from .review_history import ReviewHistoryDialog
@@ -73,10 +74,15 @@ ISSUES = (
     ("Unknown MITRE tactic", "tactics", "Only MITRE tactic names can be used. Select Remove beside the values that "
                                         "aren't, then tick the tactics that apply."),
     ("techniques accepts parent IDs", "techniques",
-     "Parent techniques look like T1562. Put IDs with a dot, such as T1562.004, under Sub-techniques."),
-    ("subTechniques requires IDs", "subTechniques", "Sub-techniques look like T1562.004."),
-    ("Include the parent technique", "techniques", "Add each sub-technique's parent here, for example T1562 for T1562.004."),
-    ("Missing MITRE metadata", "tactics", "Add at least one tactic and one parent technique."),
+     "A value listed as a technique isn't a parent technique ID such as T1562. Under the list, Fix these files a "
+     "sub-technique in its own field and Remove drops a value the list doesn't hold."),
+    ("subTechniques requires IDs", "subTechniques",
+     "A value listed as a sub-technique isn't an ID such as T1562.004. Under the list, Fix these files a technique "
+     "in its own field and Remove drops a value the list doesn't hold."),
+    ("Include the parent technique", "techniques",
+     "Each sub-technique needs its parent ticked too, for example T1562 for T1562.004: Fix these, under the list, "
+     "ticks the ones the list holds."),
+    ("Missing MITRE metadata", "tactics", "Tick at least one tactic and one technique."),
     ("Use the guided fields for", "advanced", None), ("Unknown rule fields", "advanced", None),
     ("has an invalid type", "advanced", None), ("alertRuleTemplateName", "advanced", None),
 )
@@ -308,8 +314,7 @@ class RuleBuilderPage:
         self.test_panel(query)
 
         self.tactics(mitre)
-        self.field(mitre, "Parent techniques", "techniques", hint="For example T1562, T1003")
-        self.field(mitre, "Sub-techniques", "subTechniques", hint="For example T1562.004 — include its parent above")
+        self.techniques(mitre)
         self.check(mitre, "Allow missing MITRE details for a migrated rule", "allow_missing_mitre")
         self.hint(mitre, "This only relaxes this check. Each client the rule is assigned to must also allow it.")
 
@@ -480,6 +485,17 @@ class RuleBuilderPage:
             box.grid(row=index % rows, column=index // rows, sticky="w", padx=(0, px(12)))
         for column in range(TACTIC_COLUMNS):
             grid.columnconfigure(column, weight=int(column < columns), uniform="tactics" if column < columns else "")
+
+    def techniques(self, parent):
+        """The technique picker, in step with vars['techniques'] and vars['subTechniques'], which drafts read
+        and write. A flag on either field outlines the picker."""
+        for key in ("techniques", "subTechniques"):
+            var = self.vars[key] = tk.StringVar()
+            var.trace_add("write", lambda *args, key=key: self.changed(key))
+        self.picker = TechniquePicker(parent, self.vars["techniques"], self.vars["subTechniques"], self.vars["tactics"],
+                                      busy=lambda: self.app.busy, inputs=self.app.inputs)
+        self.widgets["techniques"] = self.widgets["subTechniques"] = self.picker.frame
+        self.labels["techniques"], self.labels["subTechniques"] = "Techniques", "Sub-techniques"
 
     def remove_unknown_tactics(self):
         if not self.app.busy:
@@ -898,6 +914,7 @@ class RuleBuilderPage:
         # Repeat the advice under the field: the banner may be scrolled out of view.
         anchor = widget.master if isinstance(widget, (tk.Text, ttk.Spinbox)) else widget
         if key == "tactics" and self.unknown_tactics.winfo_manager(): anchor = self.unknown_tactics  # Under its Remove.
+        if key in ("techniques", "subTechniques") and self.picker.unknown.winfo_manager(): anchor = self.picker.unknown
         width = anchor.winfo_width() if anchor.winfo_width() > 1 else self.steps.winfo_width() // 2
         # width=1: the label wraps to the width it is given, so its text never widens the field's column.
         label = tk.Label(anchor.master, text=advice, font=FONTS["small"], fg=COLORS["danger"], bg=COLORS["card"],
@@ -916,7 +933,9 @@ class RuleBuilderPage:
         for name in list(self.flagged) if key is None else [key] if key in self.flagged else []:
             del self.flagged[name]
             self.flag_labels.pop(name).destroy()
-            self.outline(self.widgets[name], False)
+            # Techniques and Sub-techniques share the picker: its outline stays while either is flagged.
+            if not any(self.widgets[other] is self.widgets[name] for other in self.flagged):
+                self.outline(self.widgets[name], False)
 
     @staticmethod
     def outline(widget, error):
@@ -925,7 +944,8 @@ class RuleBuilderPage:
         elif isinstance(widget, tk.Text):
             widget.master.error = error
             widget.master.configure(highlightbackground=COLORS["danger" if error else "line"], highlightthickness=2 if error else 1)
-        elif isinstance(widget, tk.Frame):  # A segmented choice, or the tactic grid.
+        elif isinstance(widget, tk.Frame):  # A segmented choice, the tactic grid or the technique picker.
+            widget.error = error  # The picker's focus ring keeps the red while this is set.
             widget.configure(highlightbackground=COLORS["danger" if error else "line"], highlightthickness=2 if error else 1)
 
     # ------------------------------------------------------------ KQL check
