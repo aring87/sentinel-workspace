@@ -18,10 +18,13 @@ STATUS = {"danger": ("F8CBAD", "9C0006"), "warning": ("FFE699", "7F6000"), "succ
           "info": ("DDEBF7", "1F4E79"), "neutral": ("EDEDED", "595959")}
 ORDER = ("danger", "warning", "info", "success", "neutral")
 TITLES = {"scan": "Duplicate rule scan", "audit": "Duplicate rule audit", "disable-preview": "Duplicate rule disable preview",
-          "disable-apply": "Duplicate rule disable report"}
+          "disable-apply": "Duplicate rule disable report", "cleanup-preview": "Duplicate cleanup preview",
+          "cleanup-apply": "Duplicate cleanup report"}
 MODE_LINES = {"scan": "Scan workspaces (read-only)", "audit": "Audit library rules (read-only)",
+              "cleanup-preview": "Preview cleanup (read-only dry run)",
+              "cleanup-apply": "Clean up duplicates (changed workspaces after GitHub's approval)",
               "disable-preview": "Preview disabling (read-only dry run)",
-              "disable-apply": "Disable duplicates (changed workspaces after GitHub's approval)"}
+              "disable-apply": "Disable library copies (changed workspaces after GitHub's approval)"}
 MATCH_WORDS = {"name": "Same name", "template": "Same template", "extra": "Other name", "similar": "Similar query"}
 MAX_ROWS = 2000  # Detail rows in the document; the CSV and Excel report always hold every row.
 
@@ -32,6 +35,7 @@ def status_label(kind, row, mode=None):
     if kind == "scan":
         return {"danger": "Duplicate enabled", "success": "Only one enabled", "neutral": "Disabled"}[tone]
     action = str(row.get("action") or "")
+    if kind == "cleanup" and action == "keep": return "Keep"
     if tone == "warning": return "Would disable"
     if tone == "success": return "Disabled"
     if tone == "danger": return "Failed"
@@ -162,7 +166,8 @@ class Report:
             shown = ", ".join(targets[:10]) + (f" and {len(targets) - 10} more" if len(targets) > 10 else "")
             clients = f"{len(targets)} selected: {shown}"
         rules = plan.get("rules") or []
-        if self.mode == "scan": checked = "Not used: a scan compares every rule in each workspace with the others"
+        if self.mode in dupes.SCAN_MODES:
+            checked = "Not used: this works from the scan of each workspace, comparing every rule with the others"
         elif rules:
             checked = f"{len(rules)}: " + ", ".join(short_path(p) for p in rules[:10]) + \
                 (f" and {len(rules) - 10} more" if len(rules) > 10 else "")
@@ -212,6 +217,47 @@ class Report:
                              "detection runs more than once there and can raise duplicate incidents."
                              if live else "Every group has at most one enabled rule, so no detection runs twice."))
             return
+        if self.kind == "cleanup":
+            groups = {(row["target"], row["group"]) for row in rows}
+            action = lambda row: str(row.get("action") or "")
+            kept = sum(action(row) == "keep" for row in rows)
+            would = sum(action(row) == "disable" for row in rows)
+            done = sum(action(row) == "disabled" for row in rows)
+            skipped = {(row["target"], row["group"]) for row in rows if action(row).startswith("skip")}
+            failed = sum(action(row).startswith("FAILED") for row in rows)
+            tiles = [(len(groups), "Duplicate groups", None), (kept, "Kept enabled", "info")]
+            tiles.append((done, "Disabled by this run", "success") if self.mode == "cleanup-apply"
+                         else (would, "Would be disabled", "warning"))
+            tiles.append((len(skipped), "Groups skipped", "neutral"))
+            if failed: tiles.append((failed, "Failed", "danger"))
+            kpi_tiles(doc, tiles)
+            if not rows:
+                doc.paragraph("No workspace among the selected clients has two or more enabled copies of a rule: "
+                              "there is nothing to clean up.")
+                return
+            text = (f"Across {plural(len(targets), 'client')}, {plural(len(groups), 'group')} of look-alike rules "
+                    f"{'has' if len(groups) == 1 else 'have'} two or more rules enabled. Each keeps one rule enabled: "
+                    "the library rule if the group has one, otherwise the most recently modified. ")
+            if self.mode == "cleanup-apply":
+                text += f"This run disabled {plural(done, 'rule')}" + (f", and {failed} failed." if failed else ".")
+            else:
+                text += f"Clean up duplicates would disable {plural(would, 'rule')}."
+            if skipped:
+                text += (f" {plural(len(skipped), 'group was', 'groups were')} skipped because "
+                         f"{'it has' if len(skipped) == 1 else 'they have'} more than one enabled library rule.")
+            doc.paragraph(text)
+            after = next((name for name in self.reports.get("files", {}) if name.endswith("-after.csv")), None)
+            if after:
+                try:
+                    found = dupes.parse_report(self.reports["files"][after])["rows"]
+                    left = {(row["target"], row["group"]) for row in found if dupes.tone("scan", row) == "danger"}
+                except Exception:  # The run's own report still stands; the follow-up scan is extra.
+                    left = None
+                if left is not None:
+                    doc.callout(run("A scan run straight after the change found "
+                                    + (f"{plural(len(left), 'group')} still with more than one enabled rule."
+                                       if left else "no group with more than one enabled rule.")))
+            return
         counts = self.counts(rows)
         tiles = [(len(rows), "Possible copies", None)]
         if self.mode == "disable-apply": tiles.append((counts["success"], "Disabled by this run", "success"))
@@ -231,7 +277,7 @@ class Report:
             text += f"It disabled {plural(counts['success'], 'copy', 'copies')}"
             text += f", and {counts['danger']} failed." if counts["danger"] else "."
         else:
-            text += (f"{plural(counts['warning'], 'enabled copy', 'enabled copies')} would be disabled by Disable duplicates"
+            text += (f"{plural(counts['warning'], 'enabled copy', 'enabled copies')} would be disabled by Disable library copies"
                      + (f", and {counts['info']} matched only by a similar query and "
                         f"{'needs' if counts['info'] == 1 else 'need'} review" if counts["info"] else "") + ".")
         doc.paragraph(text)
@@ -265,6 +311,24 @@ class Report:
             table.append(([Cell("Total", bold=True)] + [Cell(str(v), bold=True, align="center") for v in totals], "E2E8F0"))
             doc.table(columns, table)
             return
+        if self.kind == "cleanup":
+            last = ("Disabled", "success") if self.mode == "cleanup-apply" else ("Would disable", "warning")
+            columns = [("Client", 3680), ("Groups", 1100), ("Kept", 1100), (last[0], 1500), ("Skipped", 1300),
+                       ("Failed", 1400)]
+            table, totals = [], [0] * 5
+            for target in targets:
+                mine = [row for row in rows if row["target"] == target]
+                action = lambda row: str(row.get("action") or "")
+                values = [len({row["group"] for row in mine}), sum(action(r) == "keep" for r in mine),
+                          sum(action(r) == ("disabled" if last[1] == "success" else "disable") for r in mine),
+                          sum(action(r).startswith("skip") for r in mine), sum(action(r).startswith("FAILED") for r in mine)]
+                totals = [a + b for a, b in zip(totals, values)]
+                table.append([Cell(self.client_name(target)), Cell(str(values[0]), align="center"),
+                              count_cell(values[1], "info"), count_cell(values[2], last[1]),
+                              count_cell(values[3], "neutral"), count_cell(values[4], "danger")])
+            table.append(([Cell("Total", bold=True)] + [Cell(str(v), bold=True, align="center") for v in totals], "E2E8F0"))
+            doc.table(columns, table)
+            return
         last = ("Disabled", "success") if self.mode == "disable-apply" else ("Would disable", "warning")
         columns = [("Client", 3280), ("Copies", 1100), (last[0], 1400), ("Review", 1100), ("Skipped", 1100),
                    ("Already disabled", 1100), ("Failed", 1000)]
@@ -288,14 +352,37 @@ class Report:
         if self.kind == "scan":
             live = {(row["target"], row["group"]) for row in rows if dupes.tone("scan", row) == "danger"}
             if live:
-                steps.append(f"Decide which rule to keep in each of the {plural(len(live), 'group')} with more than one "
-                             "enabled rule: the library rule where the group has one, otherwise the copy that matches "
-                             "your standards. Keep that one enabled and the others disabled.")
-                steps.append("For copies of library rules, run Audit library rules, then Preview disabling and Disable "
-                             "duplicates for those rules: the change goes through GitHub's approval and is recorded.")
-                steps.append("For portal-only rules worth keeping, add one to the library (Drift → Add to library) so it "
-                             "is reviewed and deployed like the others.")
+                steps.append(f"Run Preview cleanup with the same clients and query similarity: for each of the "
+                             f"{plural(len(live), 'group')} with more than one enabled rule it lists the one rule it "
+                             "keeps (the library rule if the group has one, otherwise the newest) and the others it "
+                             "would disable.")
+                steps.append("Check groups matched on name or template alone: their queries may differ, so a copy may "
+                             "have been tuned on purpose.")
+                steps.append("Then run Clean up duplicates with the same choices. It disables, never deletes, and "
+                             "GitHub asks for approval before it changes anything.")
             if not steps: steps.append("No action is needed: no detection runs more than once in the clients scanned.")
+            doc.bullets(steps)
+            return
+        if self.kind == "cleanup":
+            action = lambda row: str(row.get("action") or "")
+            would = [row for row in rows if action(row) == "disable"]
+            loose = {(row["target"], row["group"]) for row in would if "similar" not in str(row.get("group_match"))}
+            skipped = {(row["target"], row["group"]) for row in rows if action(row).startswith("skip")}
+            failed = [row for row in rows if action(row).startswith("FAILED")]
+            if would and loose:
+                steps.append(f"Check the {plural(len(loose), 'group')} matched on name or template alone before "
+                             "applying: their queries may differ, so the copy being disabled may have been tuned on purpose.")
+            if would and self.mode == "cleanup-preview":
+                steps.append(f"Run Clean up duplicates with the same clients and query similarity to disable the "
+                             f"{plural(len(would), 'rule')} marked Would disable.")
+            if skipped:
+                steps.append(f"{plural(len(skipped), 'group has', 'groups have')} more than one enabled library rule. "
+                             "Change those in the library (for example, unassign one of them from the client), or the "
+                             "next deployment turns the disabled one back on.")
+            if failed:
+                steps.append(f"{plural(len(failed), 'rule', 'rules')} couldn't be disabled. The run's log in GitHub has "
+                             "the error; fix access or the rule, then run Clean up duplicates again.")
+            if not steps: steps.append("No action is needed: every duplicate group has one rule enabled.")
             doc.bullets(steps)
             return
         by = lambda test: [row for row in rows if test(row)]
@@ -306,10 +393,10 @@ class Report:
         failed = by(lambda row: str(row.get("action", "")).startswith("FAILED"))
         if would and self.mode == "audit":
             steps.append(f"Disable the {plural(len(would), 'enabled copy', 'enabled copies')} marked Would disable: run "
-                         "Preview disabling for their library rules to confirm the list, then Disable duplicates. It "
+                         "Preview disabling for their library rules to confirm the list, then Disable library copies. It "
                          "disables, never deletes, and GitHub asks for approval before it changes anything.")
         if would and self.mode == "disable-preview":
-            steps.append(f"Run Disable duplicates with the same choices to disable the "
+            steps.append(f"Run Disable library copies with the same choices to disable the "
                          f"{plural(len(would), 'copy', 'copies')} marked Would disable.")
         if review:
             steps.append(f"Review the {plural(len(review), 'rule')} matched only by a similar query. If one is a copy, list "
@@ -325,7 +412,7 @@ class Report:
                          "workspace, or the next deployment puts them back.")
         if failed:
             steps.append(f"{plural(len(failed), 'copy', 'copies')} couldn't be disabled. The run's log in GitHub has the "
-                         "error; fix access or the rule, then run Disable duplicates again.")
+                         "error; fix access or the rule, then run Disable library copies again.")
         if not steps: steps.append("No action is needed: no enabled copy of the library rules checked is left to disable.")
         doc.bullets(steps)
 
@@ -335,8 +422,15 @@ class Report:
             key = [("danger", "Duplicate enabled", "Enabled, and its group has more than one enabled rule."),
                    ("success", "Only one enabled", "Enabled, and the only enabled rule in its group."),
                    ("neutral", "Disabled", "Disabled in the workspace.")]
+        elif self.kind == "cleanup":
+            key = [("info", "Keep", "The one rule left enabled in its group."),
+                   ("warning", "Would disable", "An enabled rule Clean up duplicates would disable."),
+                   ("success", "Disabled", "Disabled by this run."),
+                   ("neutral", "Skipped / Already disabled", "A group with more than one enabled library rule, or a "
+                                                             "rule already disabled."),
+                   ("danger", "Failed", "The change was not applied.")]
         else:
-            key = [("warning", "Would disable", "An enabled copy that Disable duplicates would disable."),
+            key = [("warning", "Would disable", "An enabled copy that Disable library copies would disable."),
                    ("success", "Disabled", "Disabled by this run."),
                    ("info", "Review", "Matched only by a similar query: a person should decide."),
                    ("neutral", "Skipped / Already disabled", "Left alone (the reason is in Notes), or already disabled."),
@@ -353,20 +447,26 @@ class Report:
         if len(rows) > MAX_ROWS:
             doc.callout(run(f"This document lists the first {MAX_ROWS} of {len(rows)} rows. The CSV and Excel report saved "
                             "with it hold every row."))
-        rank = lambda row: (ORDER.index(dupes.tone(self.kind, row)),
+        # A cleanup lists each group's kept rule first, then the ones it disables.
+        rank = lambda row: (-1 if self.kind == "cleanup" and row.get("action") == "keep" else
+                            ORDER.index(dupes.tone(self.kind, row)),
                             str(row.get("name") or row.get("dup_name") or "").casefold())
         for target in sorted({row["target"] for row in shown}, key=lambda t: self.client_name(t).casefold()):
             mine = [row for row in shown if row["target"] == target]
             doc.heading(self.client_name(target), 2)
-            if self.kind == "scan":
+            if self.kind in ("scan", "cleanup"):
                 groups = sorted({row["group"] for row in mine}, key=lambda g: int(g) if str(g).isdigit() else 0)
-                doc.paragraph(run(f"{plural(len(mine), 'rule')} in {plural(len(groups), 'group')}", color=MUTED), style="Small")
+                line = f"{plural(len(mine), 'rule')} in {plural(len(groups), 'group')}"
+                if self.kind == "cleanup":
+                    off = sum(str(row.get("action")) in ("disable", "disabled") for row in mine)
+                    line += f"  ·  {off} {'disabled' if self.mode == 'cleanup-apply' else 'would be disabled'}"
+                doc.paragraph(run(line, color=MUTED), style="Small")
                 table = []
                 for number, group in enumerate(groups):
                     members = sorted((row for row in mine if row["group"] == group), key=rank)
                     fill = "F3F6FA" if number % 2 else None
                     for row in members:
-                        table.append(([Cell(f"{group}", align="center"), status_cell("scan", row, self.mode),
+                        table.append(([Cell(f"{group}", align="center"), status_cell(self.kind, row, self.mode),
                                        Cell(row["name"], note=row["rule_id"]),
                                        Cell("Yes" if dupes.truthy(row["enabled"]) else "No", align="center"),
                                        Cell(short_path(row["repo_managed"])), Cell(group_reason(row["group_match"]))], fill))
@@ -398,6 +498,21 @@ class Report:
                          "have queries at least as alike as the query similarity set for the run (comments and spacing "
                          "ignored; only rules reading the same first table are compared)."])
             doc.paragraph("A scan only reads: it changes nothing.")
+        elif self.kind == "cleanup":
+            doc.paragraph("The run scans each workspace as Scan workspaces does: it compares every analytics rule with "
+                          "every other rule there, whether or not the library manages it, and groups rules that:")
+            doc.bullets(["have the same display name (ignoring case and spacing),",
+                         "were created from the same Microsoft template, or",
+                         "have queries at least as alike as the query similarity set for the run (comments and spacing "
+                         "ignored; only rules reading the same first table are compared)."])
+            doc.paragraph("In each group with more than one enabled rule, it keeps one enabled and disables the rest:")
+            doc.bullets(["the rule kept is the library rule when the group has one, so the pipeline never turns a "
+                         "disabled copy back on; otherwise the most recently modified rule;",
+                         "a group with more than one enabled library rule is skipped: those are changed in the library;",
+                         "rules are disabled, never deleted, and only through the library's GitHub workflow after "
+                         "approval of its production environment."])
+            doc.paragraph("Groups are transitive (if A is like B and B is like C, all three are grouped) and a name or "
+                          "template match ignores the query, so read the preview before applying.")
         else:
             doc.paragraph("For each library rule checked, the run compares it with every other analytics rule in the "
                           "client's workspace. A workspace rule with a different rule ID counts as a copy when it:")
@@ -407,7 +522,7 @@ class Report:
                          "has a query at least as alike as the query similarity set for the run (comments and spacing "
                          "ignored). A match on the query alone is listed for review and is disabled only when the run "
                          "is asked to."])
-            doc.paragraph("Disable duplicates only ever disables a copy, never deletes one, and only:")
+            doc.paragraph("Disable library copies only ever disables a copy, never deletes one, and only:")
             doc.bullets(["in a workspace where the library rule itself is present and enabled, so coverage never drops;",
                          "when the copy isn't itself an enabled library rule (those are changed in the library instead);",
                          "through the library's GitHub workflow, after approval of its production environment."])

@@ -18,19 +18,26 @@ from . import brand, duplicate_report, org_logo
 from . import duplicate_workflow as dupes
 from .duplicate_workflow import DuplicateService, WORKFLOW
 
-MODES = (("scan", "Scan workspaces"), ("audit", "Audit library rules"), ("disable-preview", "Preview disabling"),
-         ("disable-apply", "Disable duplicates"))
+# Two groups of runs: from the scan of each workspace (no library rules needed), and from chosen library rules.
+SCAN_GROUP = (("scan", "Scan workspaces"), ("cleanup-preview", "Preview cleanup"), ("cleanup-apply", "Clean up duplicates"))
+LIBRARY_GROUP = (("audit", "Audit library rules"), ("disable-preview", "Preview disabling"),
+                 ("disable-apply", "Disable library copies"))
+MODES = SCAN_GROUP + LIBRARY_GROUP
 MODE_LABELS = dict(MODES)
 MODE_HINTS = {
     "scan": "Read-only. Groups the rules in each workspace that look like copies of each other (same name, same "
-            "template or a similar query), whether or not the library manages them. Use it to find copies made "
-            "before the pipeline.",
-    "audit": "Read-only. Lists the workspace rules that copy the library rules assigned to each client, and what "
-             "Disable duplicates would do with each one.",
-    "disable-preview": "Read-only. A dry run of Disable duplicates for the rules you selected: it lists each copy it "
-                       "would disable, and why it would leave the others.",
-    "disable-apply": "Disables (never deletes) the copies of the selected rules, through GitHub. GitHub asks for "
-                     "approval of the production environment before the run changes anything.",
+            "template or a similar query), whether or not the library manages them.",
+    "cleanup-preview": "Read-only. In each workspace, for every group of two or more enabled look-alike rules, lists "
+                       "the one it would keep (the library rule if the group has one, otherwise the newest) and the "
+                       "others it would disable.",
+    "cleanup-apply": "Keeps one rule enabled in each duplicate group and disables (never deletes) the rest, through "
+                     "GitHub. GitHub asks for approval of the production environment before the run changes anything.",
+    "audit": "Read-only. Lists the workspace rules that copy the library rules you choose, and what Disable "
+             "library copies would do with each one.",
+    "disable-preview": "Read-only. A dry run of Disable library copies for the rules you choose: it lists each copy "
+                       "it would disable, and why it would leave the others.",
+    "disable-apply": "Disables (never deletes) the copies of the library rules you choose, keeping the library "
+                     "rule, through GitHub. GitHub asks for approval of the production environment first.",
 }
 SIMILARITIES = ("80%", "85%", "90%", "95%", "100%")
 POLL_MS = 15000
@@ -38,6 +45,7 @@ POLL_MS = 15000
 COLUMNS = (("target", "Client target", 130, False), ("rule", "Workspace rule", 220, True), ("enabled", "Enabled", 70, False),
            ("match", "Match", 150, False), ("action", "Action", 230, True), ("library", "Library rule", 150, True))
 SCAN_HEADINGS = dict(rule="Rule", match="Why grouped", action="Group", library="Library rule file")
+CLEANUP_HEADINGS = dict(rule="Rule", match="Why grouped", action="Action", library="Library rule file")
 
 
 def downloads():
@@ -51,7 +59,10 @@ def short_path(path):
 
 def row_values(kind, row):
     """The results table's cells for one report row."""
-    enabled = "Yes" if dupes.truthy(row.get("enabled" if kind == "scan" else "dup_enabled")) else "No"
+    enabled = "Yes" if dupes.truthy(row.get("dup_enabled" if kind == "duplicates" else "enabled")) else "No"
+    if kind == "cleanup":
+        return (row["target"], row["name"], enabled, row["group_match"],
+                f"Group {row['group']} · {dupes.action_text(row['action'])}", short_path(row["repo_managed"]))
     if kind == "scan":
         return (row["target"], row["name"], enabled, row["group_match"],
                 f"Group {row['group']} · {row['enabled_in_group']} enabled", short_path(row["repo_managed"]))
@@ -98,8 +109,16 @@ class DuplicateDialog(ClientPicker):
         self.banner = kit.Banner(body, self.notice); self.banner.pack(side="bottom", fill="x", pady=(px(10), 0))
 
         self.mode = tk.StringVar(value="audit" if self.rules else "scan")
-        self.mode_bar = kit.Segmented(body, self.mode, MODES, enabled=lambda: not self.locked and not self.app.busy)
-        self.mode_bar.pack(anchor="w")
+        # Two switches on one choice: runs from the scan of each workspace, and runs from chosen library rules.
+        modes = ttk.Frame(body, style="Card.TFrame"); modes.pack(anchor="w", fill="x")
+        self.mode_bars = []
+        for column, (title, group) in enumerate((("From the scan", SCAN_GROUP), ("From library rules", LIBRARY_GROUP))):
+            ttk.Label(modes, text=title, style="Hint.TLabel").grid(row=0, column=column, sticky="w",
+                                                                   padx=(0 if column == 0 else px(16), 0))
+            bar = kit.Segmented(modes, self.mode, group, enabled=lambda: not self.locked and not self.app.busy)
+            bar.grid(row=1, column=column, sticky="w", padx=(0 if column == 0 else px(16), 0), pady=(px(2), 0))
+            self.mode_bars.append(bar)
+        self.mode_bar = self.mode_bars[0]
         self.hint = tk.StringVar()
         self.hint_label = kit.wrap_to_parent(ttk.Label(body, textvariable=self.hint, style="Hint.TLabel", justify="left",
                                                        width=1), minimum=px(200))
@@ -232,8 +251,8 @@ class DuplicateDialog(ClientPicker):
     def mode_changed(self, initial=False):
         mode = self.mode.get()
         self.hint.set(MODE_HINTS[mode])
-        if mode == "scan":
-            self.rules_text.set("Not used: a scan compares the rules in each workspace with each other.")
+        if mode in dupes.SCAN_MODES:
+            self.rules_text.set("Not used: this works from the scan of each workspace, with no library rules.")
         elif self.rules:
             total = len(self.snapshot["rules"])
             if len(self.rules) == total:
@@ -246,14 +265,14 @@ class DuplicateDialog(ClientPicker):
             self.rules_text.set("Every library rule assigned to each client. To check only some, choose them.")
         else:
             self.rules_text.set("None chosen yet. Choose the library rules whose copies to disable, or use them all.")
-        if mode == "scan": self.rule_buttons.grid_remove()
+        if mode in dupes.SCAN_MODES: self.rule_buttons.grid_remove()
         else: self.rule_buttons.grid()
         disabling = mode.startswith("disable")
         for widget in (self.similar_check,):
             if disabling: widget.grid()
             else: widget.grid_remove()
         for widget in (self.names_label, self.names_box):
-            if mode == "scan": widget.grid_remove()
+            if mode in dupes.SCAN_MODES: widget.grid_remove()
             else: widget.grid()
         if not initial and self.results.winfo_manager() and not self.locked: self.show_review()
         if initial:
@@ -291,7 +310,7 @@ class DuplicateDialog(ClientPicker):
                        self.all_rules_button, self.choose_button):
             widget.configure(state="normal" if editable else "disabled")
         self.similarity_box.configure(state="readonly" if editable else "disabled")
-        self.mode_bar.render()  # It only redraws itself when the mode changes; locking and unlocking don't.
+        for bar in self.mode_bars: bar.render()  # They only redraw on a mode change; locking and unlocking don't.
         self.prepare_button.configure(state="normal" if editable else "disabled",
                                       text="Check again" if self.record and not self.record["attempted"] else "Check")
         startable = bool(self.record and not self.record["attempted"] and not self.locked and not busy)
@@ -333,11 +352,11 @@ class DuplicateDialog(ClientPicker):
         inputs = plan["inputs"]
         lines = ["Library: " + plan["repository"], "GitHub account: " + plan["identity"],
                  "Checked against main revision: " + plan["revision"],
-                 "Run: " + MODE_LABELS[plan["mode"]] + (" (read-only)" if plan["mode"] != "disable-apply" else
+                 "Run: " + MODE_LABELS[plan["mode"]] + (" (read-only)" if plan["mode"] not in dupes.APPLY_MODES else
                                                         " (changes workspaces once GitHub's approval is given)"),
                  "Clients: " + (f"every enabled client ({len(plan['targets'])})" if plan["every"] else
                                 ", ".join(plan["targets"]))]
-        if plan["mode"] != "scan":
+        if plan["mode"] not in dupes.SCAN_MODES:
             lines.append("Rules: " + (", ".join(plan["rules"]) if plan["rules"] else "every rule assigned to each client"))
         lines.append("Query similarity: " + f"{float(inputs['similarity']):.0%}")
         if plan["extra_names"]: lines.append("Also treated as copies: " + "; ".join(plan["extra_names"]))
@@ -350,8 +369,16 @@ class DuplicateDialog(ClientPicker):
     def start(self):
         if self.app.busy or self.locked or not self.record or self.record["attempted"]: return
         plan = self.record["plan"]
+        if plan["mode"] == "cleanup-apply" and not kit.confirm(
+                self.window, "Clean up duplicates",
+                f"In {len(plan['targets'])} client workspace{'s' if len(plan['targets']) != 1 else ''}, this run keeps one "
+                "rule enabled in each group of look-alike rules (the library rule if the group has one, otherwise the "
+                "newest) and disables the rest. It disables, never deletes. Preview cleanup lists exactly which.\n\n"
+                "GitHub asks for approval of the production environment before the run goes ahead.",
+                ok="Start run", destructive=True):
+            return
         if plan["mode"] == "disable-apply" and not kit.confirm(
-                self.window, "Disable duplicates",
+                self.window, "Disable library copies",
                 f"This run disables the copies of {len(plan['rules'])} library rule{'s' if len(plan['rules']) != 1 else ''} "
                 f"in {len(plan['targets'])} client workspace{'s' if len(plan['targets']) != 1 else ''}. It disables, never "
                 "deletes. Preview disabling lists exactly which copies it would change.\n\nGitHub asks for approval of "
@@ -460,6 +487,7 @@ class DuplicateDialog(ClientPicker):
         self.results_kind = kind
         headings = {key: title for key, title, *_ in COLUMNS}
         if kind == "scan": headings.update(SCAN_HEADINGS)
+        elif kind == "cleanup": headings.update(CLEANUP_HEADINGS)
         kit.set_headings(self.table, headings)
         self.table.delete(*self.table.get_children())
         for index, row in enumerate(rows):
