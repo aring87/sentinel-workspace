@@ -117,7 +117,7 @@ class DesignTests(unittest.TestCase):
                    dict(name="unset",properties=dict(displayName="Same",severity="Medium"))]
         page.render()
         dots=[str(self.root.tk.splitlist(page.tree.item(i,"image"))[0]) for i in page.tree.get_children()]
-        self.assertEqual(dots,[str(kit.dot(t,page.tree)) for t in ("success","neutral","warning")])
+        self.assertEqual(dots,[str(kit.dot(t,page.tree)) for t in ("info","neutral","warning")])
 
     def test_severity_column_text_is_coloured_and_clicks_reach_the_row(self):
         from sentinel_app.desktop_theme import COLORS, TONES
@@ -129,7 +129,7 @@ class DesignTests(unittest.TestCase):
         page.render();self.root.update();page.severity_colours.refresh()
         shown=lambda:[(l.cget("text"),l.cget("fg"),l.cget("bg")) for l in page.severity_colours.labels if l.winfo_manager()]
         # A disabled rule stays greyed out, and a severity Sentinel doesn't name keeps the table's own text.
-        self.assertEqual(shown(),[("High",TONES["danger"][0],COLORS["card"]),("Low",TONES["info"][0],COLORS["stripe"])])
+        self.assertEqual(shown(),[("High",TONES["danger"][0],COLORS["card"]),("Low",TONES["success"][0],COLORS["stripe"])])
         label=page.severity_colours.labels[1]
         label.event_generate("<ButtonPress-1>",x=2,y=2);label.event_generate("<ButtonRelease-1>",x=2,y=2);self.root.update()
         self.assertEqual(page.tree.selection(),("1",))  # The click went through to the row under it.

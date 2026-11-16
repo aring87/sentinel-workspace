@@ -64,8 +64,8 @@ choice is remembered between sessions.
 
 **Workspace rules** reads every configured analytics rule in the selected workspace,
 including disabled rules, and summarises totals by state. The dot beside each rule shows its
-state: green for enabled, grey for disabled, amber for not specified. Severity is coloured in
-its own column: High red, Medium amber, Low blue, Informational slate. Search by name, rule ID,
+state: blue for enabled, grey for disabled, amber for not specified. Severity is coloured in
+its own column: High red, Medium amber, Low green, Informational slate. Search by name, rule ID,
 severity or type (Ctrl+F), filter by state, and select a row to see its description,
 schedule, MITRE mapping, query and raw configuration. **Refresh** (F5) reads Azure again;
 **Export all…** writes a ZIP with raw JSON, CSV and collection details for every loaded

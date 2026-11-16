@@ -14,10 +14,10 @@ from .workspace_tools import list_rules, rule_values
 
 STATES = (("All states", "All"), ("Enabled", "Enabled"), ("Disabled", "Disabled"), ("Not specified", "Not specified"))
 STATE_ORDER = ("Enabled", "Disabled", "Not specified")
-SEVERITY_TONES = dict(High="danger", Medium="warning", Low="info", Informational="neutral")
+SEVERITY_TONES = dict(High="danger", Medium="warning", Low="success", Informational="neutral")
 # The list's dot follows the rule's enabled state (severity has its own column and pill), so a grey dot
 # never reads as "off" for a rule that is running.
-STATE_TONES = {"Enabled": "success", "Disabled": "neutral", "Not specified": "warning"}
+STATE_TONES = {"Enabled": "info", "Disabled": "neutral", "Not specified": "warning"}
 
 
 def severity_colour(severity):
@@ -328,7 +328,7 @@ class RulesPage:
         self.empty.line.configure(width=px(160))  # The loading line's own width stays inside a narrow pane.
         fit_columns(self.tree, OPTIONAL)
         self.tree.sort_state = self.sort; kit.set_headings(self.tree)
-        # Severity in its own colour (High red, Medium amber, Low blue, Informational slate); a disabled rule's
+        # Severity in its own colour (High red, Medium amber, Low green, Informational slate); a disabled rule's
         # row stays greyed out, as the rest of it is.
         self.severity_colours = kit.CellColours(
             self.tree, "severity", severity_colour,
@@ -421,7 +421,7 @@ class RulesPage:
         props = row.get("properties", {})
         self.detail_card.title_var.set(name)
         self.detail_card.subtitle_var.set(kind + " rule")
-        kit.Pill(self.pills, state, dict(Enabled="success", Disabled="neutral").get(state, "warning")).pack(side="left")
+        kit.Pill(self.pills, state, STATE_TONES.get(state, "warning")).pack(side="left")  # As the list's dot.
         if severity in SEVERITY_TONES:
             kit.Pill(self.pills, severity, SEVERITY_TONES[severity], dot=False).pack(side="left", padx=(px(6), 0))
         self.pills.pack(fill="x", pady=(0, px(12)))
