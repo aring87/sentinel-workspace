@@ -4,7 +4,7 @@ The app starts the library's sentinel-rule-duplicates.yml on main, follows the r
 reports the run uploads: for each pass a CSV and a colour-coded Excel workbook (scripts/rule_duplicates.py
 in the detection repository writes both). The workflow signs in with the pipeline's identity and reads
 every selected workspace, so the results match a run started from GitHub. Nothing here reads or changes
-Azure: the disable modes change workspaces only through that workflow, and Disable duplicates runs in the
+Azure: the disable modes change workspaces only through that workflow, and Disable library copies runs in the
 library's production environment, where GitHub asks for its approval first.
 
 The run's reports are untrusted input: only top-level .csv and .xlsx files are taken from the artifact,
@@ -31,7 +31,11 @@ from .rule_drafts import atomic_write
 
 WORKFLOW = "sentinel-rule-duplicates.yml"
 WORKFLOW_PATH = ".github/workflows/" + WORKFLOW
-MODES = ("scan", "audit", "disable-preview", "disable-apply")
+MODES = ("scan", "cleanup-preview", "cleanup-apply", "audit", "disable-preview", "disable-apply")
+# Modes that work from the scan's groups and need no library rules.
+SCAN_MODES = ("scan", "cleanup-preview", "cleanup-apply")
+# Modes that change workspaces (after GitHub's production approval).
+APPLY_MODES = ("cleanup-apply", "disable-apply")
 # The workflow's dispatch inputs and their types. Any other input could change what a run does, so a
 # workflow with different inputs is refused until this adapter is updated (as for previews).
 INPUTS = dict(mode="choice", rules="string", targets="string", extra_names="string", include_similar="boolean",
@@ -41,6 +45,8 @@ FIELDS = ["target", "repo_rule", "repo_rule_id", "repo_copy", "dup_rule_id", "du
           "dup_managed_by", "match", "similarity", "action"]
 SCAN_FIELDS = ["target", "group", "rule_id", "name", "kind", "enabled", "template", "repo_managed", "group_match",
                "enabled_in_group"]
+CLEANUP_FIELDS = ["target", "group", "rule_id", "name", "kind", "enabled", "repo_managed", "last_modified",
+                  "group_match", "action"]
 ARTIFACT_PREFIX = "duplicate-reports-"
 MAX_ARTIFACT = 50 * 1024 * 1024
 MAX_REPORT = 25 * 1024 * 1024
@@ -68,8 +74,9 @@ def api_bytes(endpoint):
     return result.stdout
 
 
-def check_inputs(workflow):
-    """Refuse a workflow whose dispatch inputs differ from the ones this adapter sends."""
+def check_inputs(workflow, mode=None):
+    """Refuse a workflow whose dispatch inputs differ from the ones this adapter sends, or that doesn't offer
+    ``mode`` (an older workflow without the cleanup modes still runs the others)."""
     event = (workflow.get("on") or {}).get("workflow_dispatch") if isinstance(workflow, dict) else None
     require(isinstance(event, dict), "The duplicate workflow must support workflow_dispatch.")
     inputs = event.get("inputs")
@@ -79,8 +86,10 @@ def check_inputs(workflow):
     for key, kind in INPUTS.items():
         require(inputs[key].get("type", "string") == kind, "The duplicate workflow's " + key + " input changed type.")
     options = inputs["mode"].get("options")
-    require(isinstance(options, list) and all(mode in options for mode in MODES),
-            "The duplicate workflow needs the modes " + ", ".join(MODES) + ".")
+    require(isinstance(options, list), "The duplicate workflow's mode input has no choices.")
+    for wanted in ([mode] if mode else MODES):
+        require(wanted in options, f"The library's duplicate workflow doesn't offer {wanted} yet. Merge the updated "
+                "sentinel-rule-duplicates.yml into main in the detection repository, then Check again.")
 
 
 def split_names(text):
@@ -139,16 +148,16 @@ class DuplicateService:
         require(all(t in enabled for t in targets), "Every selected client must be enabled in the library. "
                 "The workflow skips switched-off clients.")
         paths = {r["path"] for r in snapshot["rules"]}
-        rules = sorted(set(rules or [])) if mode != "scan" else []
+        rules = sorted(set(rules or [])) if mode not in SCAN_MODES else []
         require(all(p in paths for p in rules), "A selected rule isn't in the library on main. Select Refresh library.")
         require(all("," not in p for p in rules), "A rule path holds a comma, which the workflow can't take.")
         if mode.startswith("disable"):
             require(rules, "Choose the library rules whose copies to disable: All library rules, or Choose rules… "
                     "beside Rules.")
         typed = extra_names if isinstance(extra_names, str) else "\n".join(extra_names or ())
-        names = split_names(typed) if mode != "scan" else []
+        names = split_names(typed) if mode not in SCAN_MODES else []
         workflow = self.read_workflow(snapshot, repository)
-        check_inputs(workflow)
+        check_inputs(workflow, mode)
         info = self.request("GET", "repos/" + repository + "/actions/workflows/" + WORKFLOW)
         require(info.get("path") == WORKFLOW_PATH and info.get("state") == "active", "The duplicate workflow is not "
                 "active in GitHub. Enable it under Actions.")
@@ -275,7 +284,7 @@ def parse_report(data):
         raise ReviewError("A report isn't UTF-8 text.") from error
     reader = csv.DictReader(io.StringIO(text, newline=""))
     header = reader.fieldnames or []
-    kind = "scan" if header == SCAN_FIELDS else "duplicates" if header == FIELDS else None
+    kind = {tuple(SCAN_FIELDS): "scan", tuple(FIELDS): "duplicates", tuple(CLEANUP_FIELDS): "cleanup"}.get(tuple(header))
     require(kind, "A report has columns this app doesn't know. Update the app or open the report in Excel.")
     rows = []
     for row in reader:
@@ -301,7 +310,10 @@ def action_text(action):
     fixed = {"disable": "Would disable", "disabled": "Disabled by this run", "already disabled": "Already disabled",
              "review: similar query only": "Review: similar query only",
              "skip: also a selected rule": "Skipped: also a selected rule",
-             "skip: enabled repo rule, change it in git": "Skipped: a library rule, change it in the library"}
+             "skip: enabled repo rule, change it in git": "Skipped: a library rule, change it in the library",
+             "keep": "Keep",
+             "skip: more than one enabled repo rule, change it in git":
+                 "Skipped: two library rules, change them in the library"}
     if action in fixed: return fixed[action]
     if action.startswith("FAILED"): return "Failed" + action[6:]
     if action.startswith("skip: repo rule "):
@@ -317,6 +329,7 @@ def tone(kind, row):
         except ValueError: others = 0
         return "danger" if others > 1 else "success"
     action = str(row.get("action") or "")
+    if action == "keep": return "info"  # Blue, as enabled is everywhere in the app.
     if action.startswith("FAILED"): return "danger"
     if action == "disable": return "warning"
     if action == "disabled": return "success"
@@ -334,6 +347,17 @@ def summary(kind, rows, mode=None):
         if not rows: return "No rules that look like copies of each other in the selected clients."
         return (f"{len(rows)} rules in {len(groups)} duplicate group{'s' if len(groups) != 1 else ''} across {clients}"
                 f" · {len(live)} group{'s' if len(live) != 1 else ''} with more than one enabled rule.")
+    if kind == "cleanup":
+        if not rows: return "No workspace has two or more enabled copies of a rule: nothing to clean up."
+        groups = {(row["target"], row["group"]) for row in rows}
+        count = lambda test: sum(1 for row in rows if test(str(row.get("action") or "")))
+        parts = [f"{len(groups)} duplicate group{'s' if len(groups) != 1 else ''} across {clients}",
+                 f"{count(lambda a: a == 'keep')} kept"]
+        for test, word in ((lambda a: a == "disable", "would be disabled" if mode != "cleanup-apply" else "not disabled"),
+                           (lambda a: a == "disabled", "disabled"), (lambda a: a.startswith("FAILED"), "failed"),
+                           (lambda a: a.startswith("skip"), "skipped")):
+            if count(test): parts.append(f"{count(test)} {word}")
+        return " · ".join(parts) + "."
     if not rows: return "No copies of the library rules in the selected clients."
     counts = {}
     for row in rows: counts[tone(kind, row)] = counts.get(tone(kind, row), 0) + 1

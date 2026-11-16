@@ -6,8 +6,8 @@ from xml.etree import ElementTree
 import zipfile
 
 from sentinel_app import brand, duplicate_report, word_document
-from sentinel_app.duplicate_workflow import FIELDS, SCAN_FIELDS, parse_report
-from test_duplicate_workflow import AUDIT_ROWS, SCAN_ROWS, report
+from sentinel_app.duplicate_workflow import CLEANUP_FIELDS, FIELDS, SCAN_FIELDS, parse_report
+from test_duplicate_workflow import AUDIT_ROWS, CLEANUP_ROWS, SCAN_ROWS, report
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -34,9 +34,12 @@ def record(mode="audit", conclusion="success", **plan):
 
 
 def reports(kind="duplicates", mode="audit", rows=None, extra=None):
-    fields, rows = (SCAN_FIELDS, SCAN_ROWS if rows is None else rows) if kind == "scan" else \
-        (FIELDS, AUDIT_ROWS if rows is None else rows)
-    name = "workspace-duplicates.csv" if kind == "scan" else "rule-duplicates.csv"
+    if kind == "cleanup":
+        fields, rows, name = CLEANUP_FIELDS, CLEANUP_ROWS if rows is None else rows, "workspace-cleanup.csv"
+    elif kind == "scan":
+        fields, rows, name = SCAN_FIELDS, SCAN_ROWS if rows is None else rows, "workspace-duplicates.csv"
+    else:
+        fields, rows, name = FIELDS, AUDIT_ROWS if rows is None else rows, "rule-duplicates.csv"
     files = {name: report(fields, rows), name.replace(".csv", ".xlsx"): b"x"}
     files.update(extra or {})
     return dict(files=files, name=name, artifact="duplicate-reports-" + mode + "-12", mode=mode, run_number=12,
@@ -110,8 +113,23 @@ class ReportTests(unittest.TestCase):
     def test_scan_report_groups_rules_and_reads_the_reason_in_words(self):
         body = text(duplicate_report.build(reports("scan", "scan"), record("scan")))
         for words in ("Duplicate rule scan", "Rules in duplicate groups", "Groups with more than one enabled",
-                      "Duplicate enabled", "Same name, similar query (98%)", "Same template", "Decide which rule to keep"):
+                      "Duplicate enabled", "Same name, similar query (98%)", "Same template", "Run Preview cleanup"):
             self.assertIn(words, body)
+
+    def test_cleanup_report_lists_what_each_group_keeps_and_disables(self):
+        body = text(duplicate_report.build(reports("cleanup", "cleanup-preview"), record("cleanup-preview")))
+        for words in ("Duplicate cleanup preview", "Preview cleanup (read-only dry run)", "Kept enabled",
+                      "Would be disabled", "Groups skipped", "Clean up duplicates would disable 1 rule",
+                      "1 group was skipped", "Keep", "Would disable", "Run Clean up duplicates with the same clients",
+                      "more than one enabled library rule", "the most recently modified rule"):
+            self.assertIn(words, body)
+        after = {"workspace-duplicates-after.csv": report(SCAN_FIELDS, SCAN_ROWS)}
+        done = [dict(CLEANUP_ROWS[1], action="disabled")] + CLEANUP_ROWS[:1]
+        body = text(duplicate_report.build(reports("cleanup", "cleanup-apply", rows=done, extra=after),
+                                           record("cleanup-apply")))
+        self.assertIn("Duplicate cleanup report", body)
+        self.assertIn("This run disabled 1 rule.", body)
+        self.assertIn("found 1 group still with more than one enabled rule", body)
 
     def test_disable_report_counts_what_changed_and_the_audit_after(self):
         rows = [dict(AUDIT_ROWS[0], action="disabled"), dict(AUDIT_ROWS[1], action="FAILED: 403 Forbidden")]

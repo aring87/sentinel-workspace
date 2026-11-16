@@ -20,7 +20,8 @@ from test_repository_reviews import FakeGitHub, REPO, EXISTING
 
 
 def workflow(**changes):
-    inputs = dict(mode=dict(type="choice", options=["scan", "audit", "disable-preview", "disable-apply"]),
+    inputs = dict(mode=dict(type="choice", options=["scan", "cleanup-preview", "cleanup-apply", "audit",
+                                                    "disable-preview", "disable-apply"]),
                   rules=dict(type="string"), targets=dict(type="string"), extra_names=dict(type="string"),
                   include_similar=dict(type="boolean"), similarity=dict(type="string"))
     inputs.update(changes)
@@ -50,6 +51,18 @@ SCAN_ROWS = [
          template="", repo_managed="", group_match="name, similar query 0.98", enabled_in_group="2"),
     dict(target="example-primary", group="2", rule_id="c", name="Spray", kind="Scheduled", enabled="False",
          template="", repo_managed="", group_match="template", enabled_in_group="1")]
+
+
+CLEANUP_ROWS = [
+    dict(target="example-primary", group="1", rule_id="a", name="Brute force", kind="Scheduled", enabled="True",
+         repo_managed=EXISTING, last_modified="2025-01-01T00:00:00Z", group_match="name, template", action="keep"),
+    dict(target="example-primary", group="1", rule_id="b", name="Brute force", kind="Scheduled", enabled="True",
+         repo_managed="", last_modified="2026-01-01T00:00:00Z", group_match="name, template", action="disable"),
+    dict(target="example-primary", group="2", rule_id="c", name="Spray", kind="Scheduled", enabled="True",
+         repo_managed="rules/sentinel/x.yml", last_modified="", group_match="name",
+         action="skip: more than one enabled repo rule, change it in git"),
+    dict(target="example-primary", group="2", rule_id="d", name="Spray", kind="Scheduled", enabled="False",
+         repo_managed="", last_modified="", group_match="name", action="already disabled")]
 
 
 def artifact(files):
@@ -135,12 +148,24 @@ class ServiceTests(unittest.TestCase):
         self.remote.files[WORKFLOW_PATH] = json.dumps(workflow(similarity=dict(type="number"))).encode()
         with self.assertRaisesRegex(ReviewError, "changed type"): self.prepare()
         self.remote.files[WORKFLOW_PATH] = json.dumps(workflow(mode=dict(type="choice", options=["scan"]))).encode()
-        with self.assertRaisesRegex(ReviewError, "needs the modes"): self.prepare()
+        with self.assertRaisesRegex(ReviewError, "doesn't offer audit yet"): self.prepare()
         self.remote.files[WORKFLOW_PATH] = json.dumps(workflow()).encode()
         self.remote.workflow["state"] = "disabled_manually"
         with self.assertRaisesRegex(ReviewError, "not active"): self.prepare()
         del self.remote.files[WORKFLOW_PATH]
         with self.assertRaisesRegex(ReviewError, "no .github/workflows"): self.prepare()
+
+    def test_cleanup_needs_no_rules_and_an_older_workflow_still_runs_the_rest(self):
+        record = self.prepare("cleanup-apply", rules=[EXISTING], extra_names="Old name", include_similar=True,
+                              similarity=1.0)
+        self.assertEqual(record["plan"]["inputs"], dict(mode="cleanup-apply", rules="", targets="all", extra_names="",
+                                                        include_similar="false", similarity="1.00"))
+        # A workflow from before the cleanup modes: Scan still runs; a cleanup run says what to merge.
+        self.remote.files[WORKFLOW_PATH] = json.dumps(workflow(mode=dict(
+            type="choice", options=["scan", "audit", "disable-preview", "disable-apply"]))).encode()
+        self.assertEqual(self.prepare("scan")["plan"]["mode"], "scan")
+        with self.assertRaisesRegex(ReviewError, "doesn't offer cleanup-preview yet.*Merge the updated"):
+            self.prepare("cleanup-preview")
 
     def test_dispatch_sends_once_and_saves_the_attempt_first(self):
         record = self.prepare()
@@ -197,6 +222,17 @@ class ReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ReviewError, "columns"): dupes.parse_report(b"a,b\n1,2\n")
         with self.assertRaisesRegex(ReviewError, "malformed"):
             dupes.parse_report(report(FIELDS, AUDIT_ROWS[:1]) + b"x,y,z,1,2,3,4,5,6,7,8,9,10\n")
+
+    def test_cleanup_reports_parse_with_their_own_colours_and_words(self):
+        parsed = dupes.parse_report(report(dupes.CLEANUP_FIELDS, CLEANUP_ROWS))
+        self.assertEqual(parsed["kind"], "cleanup")
+        self.assertEqual([dupes.tone("cleanup", row) for row in CLEANUP_ROWS], ["info", "warning", "neutral", "neutral"])
+        self.assertEqual(dupes.action_text("keep"), "Keep")
+        self.assertEqual(dupes.action_text("skip: more than one enabled repo rule, change it in git"),
+                         "Skipped: two library rules, change them in the library")
+        self.assertEqual(dupes.summary("cleanup", CLEANUP_ROWS, "cleanup-preview"),
+                         "2 duplicate groups across 1 client · 1 kept · 1 would be disabled · 1 skipped.")
+        self.assertEqual(row_values("cleanup", CLEANUP_ROWS[1])[4], "Group 1 · Would disable")
 
     def test_the_main_report_is_the_runs_own_pass(self):
         name, parsed = dupes.main_report({"rule-duplicates-after.csv": report(FIELDS, []),
@@ -320,6 +356,19 @@ class DialogTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in Path(folder).iterdir()),
                              ["rule-duplicates-run12.csv", "rule-duplicates-run12.xlsx"])
         self.assertIn("the Word report couldn't be made: broken", self.dialog.notice.get())
+
+    def test_cleanup_modes_need_no_rules_and_clean_up_asks_first(self):
+        self.assertEqual([bar.order for bar in self.dialog.mode_bars],
+                         [["scan", "cleanup-preview", "cleanup-apply"], ["audit", "disable-preview", "disable-apply"]])
+        self.dialog.mode.set("cleanup-apply")
+        self.assertFalse(self.dialog.rule_buttons.winfo_manager())  # No library rules to choose.
+        self.dialog.prepare()
+        self.assertIn("Run: Clean up duplicates (changes workspaces", self.dialog.review.get("1.0", "end"))
+        with patch("sentinel_app.duplicate_dialog.kit.confirm", return_value=False) as confirm:
+            self.dialog.start()
+        self.assertEqual(confirm.call_args.args[1], "Clean up duplicates"); self.assertFalse(self.remote.dispatched)
+        with patch("sentinel_app.duplicate_dialog.kit.confirm", return_value=True): self.dialog.start()
+        self.assertEqual(self.remote.dispatched[0]["inputs"]["mode"], "cleanup-apply")
 
     def test_rules_can_be_chosen_in_the_dialog(self):
         rules = self.snapshot["rules"]

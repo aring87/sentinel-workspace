@@ -93,16 +93,25 @@ receipts store it.
 (`.github/workflows/sentinel-rule-duplicates.yml`) on GitHub across the clients you tick (every
 enabled client to start with). The workflow signs in with the pipeline's identity, so it reads
 each client's workspace without you signing in to it, and its results match a run started
-from GitHub. Choose what to run:
+from GitHub. Choose what to run. **From the scan** works on each workspace as it is, with no
+library rules to choose:
 
 | Run | What it does |
 |---|---|
 | **Scan workspaces** | Read-only. Groups the rules in each workspace that look like copies of each other (same name, same template or a similar query), whether or not the library manages them. |
-| **Audit library rules** | Read-only. Lists workspace rules that copy the library rules assigned to each client, and what Disable duplicates would do with each. With rules selected in the Rule library, only those. |
-| **Preview disabling** | Read-only dry run of Disable duplicates for the rules selected in the Rule library. |
-| **Disable duplicates** | Disables (never deletes) those copies. It asks you first, and GitHub asks for approval of the production environment before the run changes anything. |
+| **Preview cleanup** | Read-only dry run of Clean up duplicates: for every group of two or more enabled look-alike rules, the one rule it would keep and the others it would disable. |
+| **Clean up duplicates** | Keeps one rule enabled in each such group and disables (never deletes) the rest. The rule kept is the library rule when the group has one (so the pipeline never turns a disabled copy back on), otherwise the most recently modified. A group with two enabled library rules is skipped: change it in the library. It asks you first, and GitHub asks for approval of the production environment before the run changes anything. |
 
-The rules selected in the Rule library when you open it are the ones checked; beside **Rules**,
+**From library rules** works from the library rules you choose:
+
+| Run | What it does |
+|---|---|
+| **Audit library rules** | Read-only. Lists workspace rules that copy the library rules you choose (or, with none chosen, the rules assigned to each client), and what Disable library copies would do with each. |
+| **Preview disabling** | Read-only dry run of Disable library copies for the rules you choose. |
+| **Disable library copies** | Disables (never deletes) those copies, keeping the library rule. It asks you first, and GitHub asks for approval of the production environment. |
+
+The cleanup modes need the library's duplicate workflow from November 2026 or later on `main`;
+with an older one, Check says to merge the update. The rules selected in the Rule library when you open it are the ones checked; beside **Rules**,
 **All library rules** checks every one and **Choose rules…** lets you tick them (search by name
 or file). **Query similarity** (90% to start with) sets how alike two queries must be to count as copies;
 **Other names** adds older display names to treat as copies, separated by semicolons. Select
