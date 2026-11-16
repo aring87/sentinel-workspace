@@ -896,15 +896,17 @@ def _mix(color, other, amount):
     return "#%02X%02X%02X" % tuple(round(x + (y - x) * amount) for x, y in zip(a, b))
 
 
-def _draw(root, size, paint, samples=4):
+def _draw(root, size, paint, samples=4, width=None):
     """A size x size PhotoImage drawn pixel by pixel (no image files, so it works in the
     packaged exe). ``paint(x, y)`` gets a point in 0..1 coordinates and returns a colour
-    or None; each pixel averages a grid of samples and is transparent where all miss."""
-    image = tk.PhotoImage(master=root, width=size, height=size)
+    or None; each pixel averages a grid of samples and is transparent where all miss.
+    A larger ``width`` adds transparent columns on the right (x past 1)."""
+    width = width or size
+    image = tk.PhotoImage(master=root, width=width, height=size)
     rows, clear = [], []
     for y in range(size):
         row = []
-        for x in range(size):
+        for x in range(width):
             hits = [paint((x + (i + .5) / samples) / size, (y + (j + .5) / samples) / size)
                     for i in range(samples) for j in range(samples)]
             colors = [hit for hit in hits if hit]
@@ -931,6 +933,22 @@ def dot(tone, master=None):
         color = COLORS["subtle"] if tone == "neutral" else TONES.get(tone, TONES["neutral"])[0]
         cache["dot", tone] = _draw(root, px(10), lambda x, y: color if (x - .5) ** 2 + (y - .5) ** 2 <= .25 else None)
     return cache["dot", tone]
+
+
+def info_icon(master=None, tone="info"):
+    """A 16px ring with an 'i' in it, for a button's image (compound='left'): it carries a gap on its
+    right, so the button's text doesn't touch it. Drawn once per root and cached."""
+    root, cache = _images(master)
+    if ("info", tone) not in cache:
+        color, unit = TONES.get(tone, TONES["info"])[0], 1 / 16
+        def paint(x, y):
+            distance = math.hypot(x - .5, y - .5)
+            if 7.5 * unit - 1.5 * unit <= distance <= 7.5 * unit: return color  # The ring.
+            if math.hypot(x - .5, y - 4.9 * unit) <= 1.05 * unit: return color  # The dot.
+            if abs(x - .5) <= .85 * unit and 7 * unit <= y <= 11.6 * unit: return color  # The stem.
+            return None
+        cache["info", tone] = _draw(root, px(16), paint, width=px(16) + px(7))
+    return cache["info", tone]
 
 
 def checkbox(state, master=None):
@@ -1426,6 +1444,31 @@ def on_a_monitor(x, y):
 
 
 # ------------------------------------------------------------------ dialogs
+def _dialog_room(window, parent):
+    """(anchored, the work area, the area to centre over) for a dialog over ``parent``: the parent's window
+    when it is shown, otherwise the work area less a band at the bottom."""
+    top = parent.winfo_toplevel()
+    anchored = bool(top.winfo_viewable()) and top.winfo_width() > 1
+    if anchored:
+        ax, ay, aw, ah = top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height()
+        area = work_area(window, ax + aw // 2, ay + ah // 2)
+    else:
+        area = work_area(window)
+        ax, ay, aw, ah = area[0], area[1], area[2], area[3] - px(120)
+    return anchored, area, (ax, ay, aw, ah)
+
+
+def _fit_width(w, anchored, area_w, aw):
+    return max(px(320), min(w, aw - px(40) if anchored else aw - px(80), area_w - window_frame()[0] - px(24)))
+
+
+def dialog_width(window, parent, width):
+    """The width, in screen pixels, place_dialog will give ``window`` when asked for ``width`` (96-DPI px) over
+    ``parent``: a dialog can wrap its text to it before it is placed."""
+    anchored, area, room = _dialog_room(window, parent)
+    return _fit_width(px(width), anchored, area[2], room[2])
+
+
 def place_dialog(window, parent, width=None, height=None, min_width=None, min_height=None):
     """Size a Toplevel in scaled pixels, clamp it to the parent and to the work area of the
     monitor the parent is on (any monitor, left of or above the primary too, and never under
@@ -1436,18 +1479,10 @@ def place_dialog(window, parent, width=None, height=None, min_width=None, min_he
         # Only measure when needed: idle tasks on a not-yet-shown Toplevel whose master is
         # withdrawn leave it withdrawn for good on Windows, even after deiconify.
         window.update_idletasks()
-    top = parent.winfo_toplevel()
-    anchored = bool(top.winfo_viewable()) and top.winfo_width() > 1
-    if anchored:
-        ax, ay, aw, ah = top.winfo_rootx(), top.winfo_rooty(), top.winfo_width(), top.winfo_height()
-        left, area_top, area_w, area_h = work_area(window, ax + aw // 2, ay + ah // 2)
-    else:
-        left, area_top, area_w, area_h = work_area(window)
-        ax, ay, aw, ah = left, area_top, area_w, area_h - px(120)
+    anchored, (left, area_top, area_w, area_h), (ax, ay, aw, ah) = _dialog_room(window, parent)
     frame_w, frame_h = window_frame()
-    w = px(width) if width else window.winfo_reqwidth()
+    w = _fit_width(px(width) if width else window.winfo_reqwidth(), anchored, area_w, aw)
     h = px(height) if height else window.winfo_reqheight()
-    w = max(px(320), min(w, aw - px(40) if anchored else aw - px(80), area_w - frame_w - px(24)))
     h = max(px(200) if height else 0, min(h, ah - px(24) if anchored else ah, area_h - frame_h - px(40)))
     if min_width or min_height:
         window.minsize(min(px(min_width or 0), w), min(px(min_height or 0), h))

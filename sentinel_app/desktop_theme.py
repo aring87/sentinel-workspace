@@ -250,6 +250,7 @@ def configure_theme(root):
             ("Section", f["field"], c["muted"], c["card"]),
             ("Value", f["mono"], c["ink"], c["card"]),
             ("Prose", f["body"], c["ink"], c["card"]),
+            ("Strong", f["strong"], c["ink"], c["card"]),
             ("Key", f["small"], c["muted"], c["card"]),
             ("RaisedKey", f["small"], c["muted"], c["raised"]),
             ("RaisedValue", f["mono"], c["ink"], c["raised"]),
