@@ -124,7 +124,10 @@ an empty client list and blank GitHub settings.
 ## Build the exe and the analyst package
 
 `Build-Exe.cmd` installs PyInstaller and `requirements.txt`, then builds
-`dist\Sentinel Workspace.exe`. It first runs `scripts\make_build_assets.py`, which draws the
+`dist\Sentinel Workspace.exe`. When the checkout has a `desktop-data` folder (the one
+`Start-Sentinel.cmd` uses), it also copies the new exe beside it, so the exe opens the same
+clients and settings; if the app is open, the copy is skipped with a note, and the build still
+succeeds. Git ignores that copy. It first runs `scripts\make_build_assets.py`, which draws the
 icon (`assets\sentinel-workspace.ico`) and writes the Windows version resource
 (`assets\version-info.txt`) from the app's own brand module and version, so Explorer, the
 taskbar and the file's Details tab match the running app. The guide, the templates and the
@@ -223,7 +226,7 @@ certification.
 | Location | Purpose |
 |---|---|
 | `Start-Sentinel.cmd` | Start the desktop app from source |
-| `Build-Exe.cmd` | Build `dist\Sentinel Workspace.exe` |
+| `Build-Exe.cmd` | Build `dist\Sentinel Workspace.exe`, and copy it beside `desktop-data` when the checkout has one |
 | `sentinel_app/` | Application code (see the [project map](docs/PROJECT-MAP.md)) |
 | `docs/` | Desktop guide, onboarding guides, project map, validation and privacy notes |
 | `templates/` | Azure deployment templates |

@@ -13,6 +13,17 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed --name "Sentinel Work
   scripts\sentinel_exe.py || goto failed
 echo.
 echo Built: %CD%\dist\Sentinel Workspace.exe
+rem The exe keeps its data in desktop-data beside it. Where this checkout has a desktop-data folder, the one
+rem Start-Sentinel.cmd uses, a copy of the new exe goes beside it, so the exe opens the same clients and settings.
+rem A copy that can't be made (the app is open) doesn't fail the build.
+if exist "desktop-data\" (
+  copy /Y "dist\Sentinel Workspace.exe" "Sentinel Workspace.exe" >nul 2>&1 && (
+    echo Copied beside desktop-data: %CD%\Sentinel Workspace.exe
+  ) || (
+    echo Not copied beside desktop-data: close Sentinel Workspace, then copy
+    echo dist\Sentinel Workspace.exe into %CD% yourself.
+  )
+)
 popd
 exit /b 0
 :failed
