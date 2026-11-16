@@ -109,8 +109,13 @@ them with the report's colours: amber for a copy that would be disabled, green f
 disabled, red for a failure (or, in a scan, a group with more than one enabled rule), blue for
 a similar-query match to review, grey for skipped or already disabled. **Save reports…**
 saves the run's CSV and its colour-coded Excel report (summary sheet, colour key and per-client
-counts) to the folder you choose, named after the run (for example
-`rule-duplicates-run42.xlsx`), and never over an existing file. **New check** brings the choices
+counts), and a Word report the app makes from the same rows, to the folder you choose, named
+after the run (for example `rule-duplicates-run42.docx`), and never over an existing file; **Open
+Word report** then opens it. The Word report is for the people who act on the findings: the run's
+details (what ran, for which clients, at which library revision, and a link to the run), a summary
+with the counts, results by client, recommended next steps, every finding by client in the same
+colours as the Excel report, and how duplicates are found. It carries your organization's logo
+when `desktop-data/branding` has one, and is marked Confidential in its header. **New check** brings the choices
 back. Each run started is saved on this PC, so **Show last run** reopens it after you close the
 dialog. GitHub keeps the reports for 14 days.
 

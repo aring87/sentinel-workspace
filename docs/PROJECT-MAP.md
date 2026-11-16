@@ -38,7 +38,7 @@ All the following modules live in `sentinel_app/`:
 | Rule reviews and history | repository_reviews, rule_review_dialog, review_history |
 | Saved workflow history | workflow_history, workflow_history_dialog |
 | GitHub previews and deployments | preview_workflow, preview_dialog, deployment_workflow, deployment_dialog |
-| Duplicate rules across clients (the library's duplicate workflow on GitHub, and its reports) | duplicate_workflow, duplicate_dialog |
+| Duplicate rules across clients (the library's duplicate workflow on GitHub, and its reports) | duplicate_workflow, duplicate_dialog, duplicate_report (the Word report), word_document (a small .docx writer with no extra packages) |
 | Azure sessions and workspace access | desktop_backend, auth_recovery, workspace_tools, tenant_access, access_readiness |
 | Current Lighthouse onboarding | lighthouse_onboarding, yaml_identifiers |
 | GCC High (Azure Government) onboarding | gov_onboarding, gov_onboarding_dialog |

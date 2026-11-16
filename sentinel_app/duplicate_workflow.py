@@ -46,6 +46,8 @@ MAX_ARTIFACT = 50 * 1024 * 1024
 MAX_REPORT = 25 * 1024 * 1024
 MAX_TARGETS = 500
 REPORT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(csv|xlsx)")
+# What Save reports writes: the run's reports, and the Word report the app makes from them.
+SAVED_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(csv|xlsx|docx)")
 RECEIPT_SUFFIX = ".duplicates.json"
 TARGET = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
@@ -358,7 +360,7 @@ def save_reports(files, folder, run_number=None):
     require(folder.is_dir(), "Choose an existing folder for the reports.")
     saved = []
     for name in sorted(files):
-        require(REPORT_NAME.fullmatch(name), "Unexpected report name.")
+        require(SAVED_NAME.fullmatch(name), "Unexpected report name.")
         stem, ext = name.rsplit(".", 1)
         base = f"{stem}-run{run_number}" if run_number else stem
         path, n = folder / f"{base}.{ext}", 2
