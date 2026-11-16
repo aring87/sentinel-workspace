@@ -15,6 +15,9 @@ from .workspace_tools import list_rules, rule_values
 STATES = (("All states", "All"), ("Enabled", "Enabled"), ("Disabled", "Disabled"), ("Not specified", "Not specified"))
 STATE_ORDER = ("Enabled", "Disabled", "Not specified")
 SEVERITY_TONES = dict(High="danger", Medium="warning", Low="info", Informational="neutral")
+# The list's dot follows the rule's enabled state (severity has its own column and pill), so a grey dot
+# never reads as "off" for a rule that is running.
+STATE_TONES = {"Enabled": "success", "Disabled": "neutral", "Not specified": "warning"}
 MONO_KEYS = {"Rule ID", "Template"}
 ALERT_WORDS = {"GreaterThan": "results are more than", "LessThan": "results are fewer than",
                "NotEqual": "results are not", "Equal": "results equal"}
@@ -481,7 +484,7 @@ class RulesPage:
             if state not in ("All states", values[1]): continue
             if needle and needle not in haystack: continue
             self.tree.insert("", "end", iid=str(index), values=values,
-                             image=kit.dot(SEVERITY_TONES.get(values[2], "neutral"), self.tree),
+                             image=kit.dot(STATE_TONES.get(values[1], "neutral"), self.tree),
                              tags=("muted",) if values[1] != "Enabled" else ())
         if keep is not None and self.tree.exists(keep):
             self.tree.selection_set(keep); self.tree.see(keep)  # Keep the open details while the list is filtered.
