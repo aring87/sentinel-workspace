@@ -279,8 +279,10 @@ class CatalogPageTests(unittest.TestCase):
         popup.assert_called_once()
         labels = lambda: [page.menu.entrycget(i, "label") for i in range(page.menu.index("end") + 1)
                           if page.menu.type(i) == "command"]
-        self.assertEqual(labels(), ["Library issues", "Open saved assignment…", "Preview & deployment history…"])
+        self.assertEqual(labels(), ["Library issues", "Find duplicate rules…", "Open saved assignment…",
+                                    "Preview & deployment history…"])
         self.assertEqual(page.menu.entrycget(0, "state"), "disabled")  # Nothing loaded yet.
+        self.assertEqual(page.menu.entrycget(1, "state"), "disabled")
         page.snapshot = dict(library(), issues=["a", "b"]); page.render()
         with patch.object(page.menu, "tk_popup"): page.library_menu()
         self.assertEqual(labels()[0], "Library issues (2)"); self.assertEqual(page.menu.entrycget(0, "state"), "normal")

@@ -8,6 +8,7 @@ from .advice import lookup
 from .desktop_theme import px
 from .repository_catalog import GitHubReader, load_local, state
 from .preview_dialog import PreviewDialog
+from .duplicate_dialog import DuplicateDialog
 from .assignment_dialog import AssignmentDialog
 from .workflow_history_dialog import WorkflowHistoryDialog
 from .rule_assignments import MAX_RULES, load_request as load_assignment_request
@@ -123,9 +124,11 @@ class CatalogPage:
         self.summary_pill.pack(side="right")
         self.summary_pill.bind("<Button-1>", lambda event: self.issues() if self.issue_count() else None)
         kit.tooltip(self.summary_pill, "")
-        self.menu_button = app.button(library.actions, "Library ⋯", self.library_menu, style="Small.Ghost.TButton")
+        # A bordered button with a down arrow, so it reads as a menu rather than a link.
+        self.menu_button = app.button(library.actions, "Library ▾", self.library_menu, style="Small.Secondary.TButton")
+        self.menu_button.configure(cursor="hand2")
         self.menu_button.pack(side="right", padx=(0, px(8)))
-        kit.tooltip(self.menu_button, "Library issues, saved assignments and preview history")
+        kit.tooltip(self.menu_button, "Library issues, duplicate rules across clients, saved assignments and preview history")
         self.menu = kit.popup_menu(app.root)
         body = library.body
         bar = ttk.Frame(body, style="Card.TFrame"); bar.pack(fill="x", pady=(0, px(12)))
@@ -153,6 +156,13 @@ class CatalogPage:
         for button in (self.edit_button, self.assign_button, self.preview_button):
             button.pack(side="left", padx=(0, px(6)))
         self.rule_actions = [self.assign_button, self.preview_button]
+        # After Preview and deploy… when the row has room; always in the Library ▾ menu too. It needs no rule selected:
+        # Scan and Audit cover every client, and the selected rules are the ones Audit and the disable modes check.
+        self.duplicates_button = ttk.Button(self.commands, text="Find duplicates…", style="Small.Secondary.TButton",
+                                            command=self.find_duplicates, state="disabled")
+        kit.tooltip(self.duplicates_button, "Run the library's duplicate workflow on GitHub across client workspaces, "
+                                            "then save its CSV and colour-coded Excel reports")
+        self.commands.bind("<Configure>", lambda event: self.fit_commands(), add="+")
         # Ctrl- or Shift-click selects several rules, to assign them together.
         self.table_frame, self.tree, self.empty = kit.table(body, COLUMNS, height=6, sort=self.sort_by, menu=self.row_menu,
                                                             selectmode="extended")
@@ -306,6 +316,16 @@ class CatalogPage:
                                      text=f"Assign {count} rules to clients…" if count > 1 else "Assign to clients…")
         for button in (self.edit_button, self.preview_button):
             button.configure(state="normal" if count == 1 else "disabled")
+        self.duplicates_button.configure(state="normal" if self.snapshot and not self.app.busy else "disabled")
+        self.fit_commands()  # Edit selected rule comes and goes with the view.
+
+    def fit_commands(self):
+        """Show Find duplicates… after Preview and deploy… only while it fits beside the other buttons."""
+        row, button = self.commands, self.duplicates_button
+        needed = sum(child.winfo_reqwidth() + px(6) for child in row.pack_slaves() if child is not button)
+        fits = row.winfo_width() >= needed + px(12) + button.winfo_reqwidth()
+        if fits and not button.winfo_manager(): button.pack(side="left", padx=(0, px(6)), after=self.preview_button)
+        elif not fits and button.winfo_manager(): button.pack_forget()
 
     def selected_rules(self):
         """The selected rules, in list order; none outside the Rules view."""
@@ -358,6 +378,21 @@ class CatalogPage:
             self.say(*problem); return
         self.note.set(""); PreviewDialog(self.app, self.snapshot, row)
 
+    def duplicates_problem(self):
+        """Why the duplicate workflow can't start from the loaded library, as (text, action, tone), or None."""
+        if not self.snapshot or not self.snapshot.get("repository") or not self.snapshot.get("private")                 or not self.snapshot.get("can_push"):
+            return ("Finding duplicates runs a workflow in your team's private GitHub repository, which needs write "
+                    "access. Choose GitHub as the source, then select Refresh library.",
+                    ("Change source…", lambda: self.show_source(True)), "info")
+        return None
+
+    def find_duplicates(self):
+        if self.app.busy: return
+        problem = self.duplicates_problem()
+        if problem:
+            self.say(*problem); return
+        self.note.set(""); DuplicateDialog(self.app, self.snapshot, self.selected_rules())
+
     def open_workflow_history(self):
         if not self.app.busy: WorkflowHistoryDialog(self.app)
 
@@ -386,11 +421,15 @@ class CatalogPage:
             self.say("That saved assignment couldn't be opened: " + str(error), tone="danger")
 
     def library_menu(self):
-        """The library-wide commands, under the Library ⋯ button."""
+        """The library-wide commands, under the Library ▾ button."""
         if self.app.busy: return
         menu, count = self.menu, self.issue_count()
         menu.delete(0, "end")
         menu.add_command(label="Library issues" + (f" ({count})" if count else ""), command=self.issues,
+                         state="normal" if self.snapshot else "disabled")
+        # Every client with no rule selected (Scan, or Audit of every assigned rule); the selected rules are the
+        # ones Audit and the disable modes check.
+        menu.add_command(label="Find duplicate rules…", command=self.find_duplicates,
                          state="normal" if self.snapshot else "disabled")
         menu.add_separator()
         menu.add_command(label="Open saved assignment…", command=self.open_assignment_review)
