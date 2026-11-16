@@ -34,66 +34,121 @@ MONO_KEYS = {"Rule ID", "File", "Target"}
 NONE = "—"
 
 
-# The Drift key: each wording the Drift column uses, its dot, what it means and the step that fixes it.
-# The labels are drift_text()'s own, so the key reads exactly as the list does.
+# The Drift key: each wording the Drift column uses, as (kind, labels, title, lines, (fix, what it does)
+# [, a closing (heading, text) line]). The labels are drift_text()'s own, so the key reads exactly as the
+# list does; the title is how the key heads them. Each line is (heading, text), short enough to read at a
+# glance: most fit on one line of the dialog.
 KEY = (
-    (MISSING, ("Missing from workspace",),
-     "The library assigns this rule to the client, but it isn't in the workspace: it was never deployed, or was "
-     "deleted in the portal.",
-     "Preview and deploy… puts it in the workspace."),
-    (DIFFERENT, ("State differs", "Severity differs", "State and severity differ"),
-     "The rule is in the library and in the workspace, but the workspace's enabled state or severity doesn't match "
-     "what the library sets for this client (after its overrides). Someone changed it in the portal, or the library "
-     "changed and wasn't deployed.",
-     "Preview and deploy… puts the library's settings back."),
-    (LIVE_ONLY, ("Not assigned here",),
-     "The rule is in the workspace and in the library, but the library doesn't assign it to this client, so GitHub "
-     "doesn't manage it here.",
-     "Assign to this client… adds it to the client's file."),
-    (LIVE_ONLY, ("Not in library",),
-     "The rule is only in the workspace: the library has no rule with its ID. It was made in the portal or turned on "
-     "from Content hub.",
-     "Add to library… opens it in the Rule builder as a new rule. Fusion and Microsoft incident-creation rules have "
-     "no query of their own, so they stay in the portal."),
+    (MISSING, ("Missing from workspace",), "Missing from workspace",
+     (("What it means", "Assigned to this client in the library, but not in the workspace, so it isn't running."),
+      ("Usually because", "Not deployed yet, deleted in the portal, or the client is switched off in the library.")),
+     ("Preview and deploy…", "deploys it to the workspace.")),
+    (DIFFERENT, ("State differs", "Severity differs", "State and severity differ"), "State differs · Severity differs",
+     (("What it means", "In both, but its enabled state or severity in the workspace doesn't match the library."),
+      ("Usually because", "Changed in the portal, or the library changed and hasn't been deployed since.")),
+     ("Preview and deploy…", "puts the library's settings back, overwriting portal changes.")),
+    (LIVE_ONLY, ("Not assigned here",), "Not assigned here",
+     (("What it means", "In the library and workspace, but not in this client's file, so GitHub doesn't manage it."),
+      ("Usually because", "Deployed outside this client's file, or removed from the file after it was deployed.")),
+     ("Assign to this client…", "adds it to the client's file. Ctrl-click rules to assign several together.")),
+    (LIVE_ONLY, ("Not in library",), "Not in library",
+     (("What it means", "Only in the workspace: the library has no rule with its ID, so GitHub doesn't manage it."),
+      ("Usually because", "Made in the portal, or turned on from Content hub.")),
+     ("Add to library…", "opens it in the Rule builder as a new library rule."),
+     # live_rules.why_not: only Scheduled and NRT rules with a GUID for an ID convert.
+     ("Exception", "Only Scheduled and NRT rules whose ID is a GUID can be added. Fusion, ML behavior analytics, "
+                   "threat intelligence and incident-creation rules stay in the portal.")),
 )
-KEY_NOTE = ("A rule the library assigns to this client whose state and severity match isn't listed: it is in step, "
-            "and the line under Rule drift counts those rules. Only the enabled state and severity are compared; "
-            "other settings, such as the query or schedule, aren't counted as drift.")
+KEY_NOTES = ("Rules that match the library aren't listed. The line under Rule drift counts them as in step.",
+             "Only the enabled state and severity count as drift. Other differences show in Drift details but "
+             "don't list a rule.",
+             "Nothing deploys to a client that is switched off in the library: switch it on in its client file "
+             "before Preview and deploy.")
 FILTER_TIPS = {MISSING: "Assigned to this client in the library, but not in the workspace",
                DIFFERENT: "In both, but the workspace's enabled state or severity doesn't match the library",
                LIVE_ONLY: "In the workspace, but not in the library or not assigned to this client"}
 
 
 class DriftKey:
-    """What each kind of drift means, beside the dot the list shows it with."""
+    """What each kind of drift means, beside the dot the list shows it with and the filter it is under."""
+
+    WIDTH = 800  # 96-DPI px.
 
     def __init__(self, app):
         self.window = window = tk.Toplevel(app.root)
         window.title("Drift key"); window.configure(bg=COLORS["card"])
-        body = ttk.Frame(window, style="Card.TFrame", padding=(kit.space("xl"), px(20), kit.space("xl"), px(18)))
+        gutter = kit.space("xl")
+        body = ttk.Frame(window, style="Card.TFrame", padding=(gutter, px(20), gutter, px(18)))
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text="What the drift means", style="CardTitle.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Each rule in the Drift list is out of step with the library in one of these ways.",
-                  style="CardSubtitle.TLabel").pack(anchor="w", pady=(px(2), px(14)))
-        rows = ttk.Frame(body, style="Card.TFrame"); rows.pack(fill="x")
-        rows.columnconfigure(1, weight=1)
-        wrap = px(520)
-        self.labels = []
-        for index, (kind, labels, meaning, step) in enumerate(KEY):
-            dot = ttk.Label(rows, image=kit.dot(KIND_TONES[kind], rows), style="Card.TLabel")
-            dot.grid(row=2 * index, column=0, sticky="nw", padx=(0, px(10)), pady=(px(10) if index else 0, 0))
-            head = ttk.Label(rows, text=" · ".join(labels), style="Section.TLabel")
-            head.grid(row=2 * index, column=1, sticky="w", pady=(px(8) if index else 0, 0))
-            text = ttk.Label(rows, text=meaning + " " + step, style="Body.TLabel", wraplength=wrap, justify="left")
-            text.grid(row=2 * index + 1, column=1, sticky="w", pady=(px(2), 0))
-            self.labels.append((labels, text))
-        ttk.Label(body, text=KEY_NOTE, style="Hint.TLabel", wraplength=wrap + px(24), justify="left").pack(
-            anchor="w", pady=(px(16), 0))
+        # The width place_dialog will give it (less on a narrow window or screen), so the text wraps to fit.
+        inside = kit.dialog_width(window, app.root, self.WIDTH) - 2 * gutter
+        ttk.Label(body, text="What the Drift column means", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(body, text="Every listed rule is out of step with the library in one of these ways. The tag on the "
+                             "right is its filter.", style="CardSubtitle.TLabel", wraplength=inside,
+                  justify="left").pack(anchor="w", pady=(px(2), px(14)))
+        # OK is packed before the entries, so a short screen squeezes the entries (which then scroll), not OK.
         actions, buttons = kit.action_row(body, primary=("OK", window.destroy))
-        actions.pack(fill="x", pady=(px(18), 0))
+        actions.pack(side="bottom", fill="x", pady=(px(12), 0))
         self.ok_button = buttons[0]
-        kit.place_dialog(window, app.root, width=640)
+        self.area = area = kit.ScrollArea(body)
+        area.frame.pack(fill="both", expand=True)
+        rows = area.inner
+        rows.columnconfigure(2, weight=1)
+        # The text column: what is left of the dialog after the dot, the headings' column (as wide as its
+        # widest heading) and a scrollbar, less a margin for the labels' own padding.
+        heading_width = max(kit.font(rows, "small").measure(heading) for entry in KEY
+                            for heading, _ in entry[3] + entry[5:] + (("To fix", ""),))
+        wrap = inside - px(10) - px(10) - heading_width - px(16) - px(12) - px(24)
+        strong = kit.font(rows, "strong")
+        row, self.labels = 0, []
+        for index, (kind, labels, title, lines, (fix, does), *closing) in enumerate(KEY):
+            if index:
+                ttk.Separator(rows).grid(row=row, column=0, columnspan=3, sticky="ew", pady=px(10))
+                row += 1
+            ttk.Label(rows, image=kit.dot(KIND_TONES[kind], rows), style="Card.TLabel").grid(
+                row=row, column=0, sticky="w", padx=(0, px(10)))
+            ttk.Label(rows, text=title, style="Strong.TLabel").grid(row=row, column=1, columnspan=2, sticky="w")
+            kit.Pill(rows, KIND_LABELS[kind], KIND_TONES[kind], dot=False).grid(row=row, column=2, sticky="e",
+                                                                               padx=(0, px(12)))
+            row += 1
+            for heading, text in lines:
+                self.line(rows, row, heading, ttk.Label(rows, text=text, style="Body.TLabel", wraplength=wrap,
+                                                       justify="left"))
+                row += 1
+            # To fix: the button's own name, as Drift details shows it, then what it does.
+            step = ttk.Frame(rows, style="Card.TFrame")
+            name = ttk.Label(step, text=fix, style="Strong.TLabel"); name.pack(side="left", anchor="n")
+            ttk.Label(step, text=does, style="Body.TLabel", justify="left",
+                      wraplength=max(px(120), wrap - strong.measure(fix) - px(12))).pack(
+                side="left", anchor="n", padx=(px(6), 0))
+            self.line(rows, row, "To fix", step)
+            row += 1
+            for heading, text in closing:
+                self.line(rows, row, heading, ttk.Label(rows, text=text, style="Body.TLabel", wraplength=wrap,
+                                                       justify="left"))
+                row += 1
+            self.labels.append((labels, name))
+        notes = ttk.Frame(rows, style="Card.TFrame")
+        notes.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(px(14), 0))
+        ttk.Label(notes, text="Good to know", style="Section.TLabel").pack(anchor="w", pady=(0, px(2)))
+        for note in KEY_NOTES:
+            line = ttk.Frame(notes, style="Card.TFrame"); line.pack(fill="x", pady=(px(2), 0))
+            ttk.Label(line, text="•", style="Hint.TLabel").pack(side="left", anchor="n", padx=(px(2), px(8)))
+            ttk.Label(line, text=note, style="Hint.TLabel", justify="left", wraplength=inside - px(48)).pack(
+                side="left", anchor="n")
+        # The scroll area asks for its whole content, so the dialog opens tall enough not to scroll whenever
+        # the screen allows (place_dialog keeps it inside the app's window).
+        window.update_idletasks()
+        area.canvas.configure(height=rows.winfo_reqheight())
+        kit.place_dialog(window, app.root, width=self.WIDTH)
         kit.modal(window, app.root, window.destroy, primary=self.ok_button, focus=self.ok_button)
+
+    @staticmethod
+    def line(rows, row, heading, value):
+        """One line of an entry: its small heading, then the text (or step) beside it."""
+        ttk.Label(rows, text=heading, style="Key.TLabel").grid(row=row, column=1, sticky="nw", padx=(0, px(16)),
+                                                               pady=(px(6), 0))
+        value.grid(row=row, column=2, sticky="w", pady=(px(5), 0))
 
 
 def side_text(state_text, severity):
@@ -162,7 +217,10 @@ class DriftPage:
         self.library_button.pack(side="right", padx=(0, px(8)))
         kit.tooltip(self.library_button, "Read the rule library again")
         # Always usable: it only explains the list.
-        self.key_button = ttk.Button(card.actions, text="Key", command=self.show_key, style="Ghost.TButton")
+        # width=0: as wide as its icon and word, not the style's six-character minimum, so the title keeps its room.
+        self.key_button = ttk.Button(card.actions, text="Key", image=kit.info_icon(card.actions), compound="left",
+                                     command=self.show_key, style="Secondary.TButton", width=0,
+                                     padding=(px(12), px(7)))
         self.key_button.pack(side="right", padx=(0, px(8)))
         kit.tooltip(self.key_button, "What each kind of drift means, and the step that fixes it")
         body = card.body

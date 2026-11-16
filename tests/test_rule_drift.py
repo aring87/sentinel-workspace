@@ -373,6 +373,20 @@ class DriftPageTests(unittest.TestCase):
         key.ok_button.invoke(); self.root.update()
         self.assertFalse(key.window.winfo_exists())
 
+    def test_the_key_wraps_its_text_to_the_width_it_is_given(self):
+        # A narrow window or screen gives the dialog less than it asks for: its text wraps inside that.
+        narrow = ui.px(560)
+        with patch("sentinel_app.drift_page.kit.dialog_width", return_value=narrow):
+            key = self.page.show_key(); self.root.update()
+        labels, pending = [], [key.window]
+        while pending:
+            widget = pending.pop(); pending.extend(widget.winfo_children())
+            if widget.winfo_class() == "TLabel" and str(widget.cget("wraplength")) not in ("", "0"):
+                labels.append(int(str(widget.cget("wraplength"))))
+        self.assertTrue(labels)
+        self.assertTrue(all(0 < width <= narrow for width in labels), labels)
+        key.window.destroy()
+
     def portal_rule(self):
         """A Scheduled rule live here that the library doesn't have, and Sentinel's record of it at the
         pipeline's API version."""

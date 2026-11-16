@@ -138,8 +138,8 @@ than one, deploys to the workspace. **Refresh** (F5) reads the workspace rules a
 once if none is loaded, as Rule library does. Right-click a rule to copy its name or ID, or
 to open it in Workspace rules or Rule library. **Key** in the card's header explains each
 wording in the Drift column (Missing from workspace, State or Severity differs, Not assigned
-here, Not in library) with its dot and the step that fixes it; pointing at a filter says the
-same in short.
+here, Not in library) with its dot and the filter it's under: what it means, what usually
+causes it and the button that fixes it; pointing at a filter says the same in short.
 
 The details of a drifted rule offer the step that brings it in step, also in its right-click
 menu. **Assign to this client…** (a library rule not assigned to this target) opens the Rule
