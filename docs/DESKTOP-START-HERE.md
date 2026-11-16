@@ -102,7 +102,9 @@ from GitHub. Choose what to run:
 | **Preview disabling** | Read-only dry run of Disable duplicates for the rules selected in the Rule library. |
 | **Disable duplicates** | Disables (never deletes) those copies. It asks you first, and GitHub asks for approval of the production environment before the run changes anything. |
 
-**Query similarity** (90% to start with) sets how alike two queries must be to count as copies;
+The rules selected in the Rule library when you open it are the ones checked; beside **Rules**,
+**All library rules** checks every one and **Choose rules…** lets you tick them (search by name
+or file). **Query similarity** (90% to start with) sets how alike two queries must be to count as copies;
 **Other names** adds older display names to treat as copies, separated by semicolons. Select
 **Check**: the app reads the library and the workflow on GitHub and shows exactly what the run
 will do, then **Start run** starts it. The dialog follows the run every 15 seconds (it says
