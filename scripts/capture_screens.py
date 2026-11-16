@@ -451,6 +451,11 @@ def main():
     kit.set_text(builder.texts["query"], query); builder.check_kql(); builder.clear_test()
     app.status.set("Ready."); app.activity_badge.set("Ready", "success")  # Not the test's flash.
     builder.steps.select(2); root.update(); shot(root, "27-builder-mitre")
+    # The technique picker: a ticked parent opens with its sub-techniques tinted, and the search narrows the list.
+    picker = builder.picker
+    app.scroll_into_view(picker.frame); root.update(); shot(root, "27b-builder-techniques")
+    picker.search.set("firewall"); picker.render(); root.update(); shot(root, "27c-builder-technique-search")
+    picker.search.set(""); picker.render(); app.scroll_into_view(builder.pages[2]); root.update()
     builder.vars["name"].set(""); builder.validate(); root.update(); shot(root, "28-builder-error")
     builder.vars["name"].set("Brute force against Entra ID accounts"); builder.validate(); root.update()
     shot(root, "29-builder-review-checked")
