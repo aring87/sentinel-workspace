@@ -117,7 +117,27 @@ class DesignTests(unittest.TestCase):
                    dict(name="unset",properties=dict(displayName="Same",severity="Medium"))]
         page.render()
         dots=[str(self.root.tk.splitlist(page.tree.item(i,"image"))[0]) for i in page.tree.get_children()]
-        self.assertEqual(dots,[str(kit.dot(t,page.tree)) for t in ("success","neutral","warning")])
+        self.assertEqual(dots,[str(kit.dot(t,page.tree)) for t in ("info","neutral","warning")])
+
+    def test_severity_column_text_is_coloured_and_clicks_reach_the_row(self):
+        from sentinel_app.desktop_theme import COLORS, TONES
+        page=self.app.rules_page;self.app.show_page("rules");self.app.rule_view.set("workspace")
+        page.rows=[dict(name="a",properties=dict(displayName="A",enabled=True,severity="High")),
+                   dict(name="b",properties=dict(displayName="B",enabled=True,severity="Low")),
+                   dict(name="c",properties=dict(displayName="C",enabled=False,severity="High")),
+                   dict(name="d",properties=dict(displayName="D",enabled=True,severity="Odd"))]
+        page.render();self.root.update();page.severity_colours.refresh()
+        shown=lambda:[(l.cget("text"),l.cget("fg"),l.cget("bg")) for l in page.severity_colours.labels if l.winfo_manager()]
+        # A disabled rule stays greyed out, and a severity Sentinel doesn't name keeps the table's own text.
+        self.assertEqual(shown(),[("High",TONES["danger"][0],COLORS["card"]),("Low",TONES["success"][0],COLORS["stripe"])])
+        label=page.severity_colours.labels[1]
+        label.event_generate("<ButtonPress-1>",x=2,y=2);label.event_generate("<ButtonRelease-1>",x=2,y=2);self.root.update()
+        self.assertEqual(page.tree.selection(),("1",))  # The click went through to the row under it.
+        page.severity_colours.refresh()
+        # On the selected row's own background (its unfocused shade when the test window lacks the focus).
+        self.assertIn(shown()[1][2],(COLORS["selection"],COLORS["selection_inactive"]))
+        page.filter.set("Disabled");page.render();self.root.update();page.severity_colours.refresh()
+        self.assertEqual(shown(),[])  # Rows that went leave no label behind.
 
     def test_stale_rule_response_discarded(self):
         app=self.app;app.session=object();app.workspace=dict(WORKSPACE)

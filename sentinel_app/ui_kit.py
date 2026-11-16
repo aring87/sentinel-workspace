@@ -1128,6 +1128,92 @@ def table(parent, columns, height=10, selectmode="browse", icon="rules", sort=No
     return frame, tree, EmptyOverlay(frame, icon=icon)
 
 
+class CellColours:
+    """Coloured text in one column of a kit table, which Tk's Treeview can't draw per cell.
+
+    A small label is laid over each visible cell of ``column`` whose ``colour(value)`` is a colour (None
+    leaves the cell as Tk draws it, as do rows ``skip(item)`` is true for), on the row's own background:
+    plain, striped or selected. The labels follow scrolling, resizing, sorting and selection, and pass
+    clicks, double-clicks, the right-click menu and the wheel on to the table, so the row behaves as if
+    they weren't there. Call ``refresh_soon()`` after the rows change."""
+
+    # Where Tk starts a cell's text, in 96-DPI px: its own inset in a table with a lead column (whose cells
+    # keep Tk's padding), and the 10 px gutter plus that inset in a plain one (desktop_theme's Treeview.Cell).
+    LEAD_INSET, PLAIN_INSET = 4, 14
+
+    def __init__(self, tree, column, colour, skip=lambda item: False):
+        self.tree, self.column, self.colour, self.skip = tree, column, colour, skip
+        self.labels, self.pending = [], None
+        self.lead = "Lead" in str(tree.cget("style"))
+        for sequence in ("<Configure>", "<Map>", "<<TreeviewSelect>>", "<FocusIn>", "<FocusOut>", "<ButtonRelease-1>",
+                         "<B1-Motion>", "<KeyRelease>"):
+            tree.bind(sequence, lambda event: self.refresh_soon(), add="+")
+        previous = str(tree.cget("yscrollcommand") or "")
+        def scrolled(first, last):  # Tk reports every scroll here; the scrollbar still hears of it first.
+            if previous: tree.tk.call(previous, first, last)
+            self.refresh_soon()
+        tree.configure(yscrollcommand=scrolled)
+
+    def refresh_soon(self):
+        # On the root, so one pending refresh is owned by one widget however the table is torn down.
+        if self.pending is None:
+            self.pending = self.tree._root().after_idle(self.refresh)
+
+    def background(self, item, selected, focused):
+        if item in selected: return COLORS["selection"] if focused else COLORS["selection_inactive"]
+        return COLORS["stripe"] if "stripe" in self.tree.tk.splitlist(self.tree.item(item, "tags")) else COLORS["card"]
+
+    def label(self, index):
+        while len(self.labels) <= index:
+            label = tk.Label(self.tree, bd=0, highlightthickness=0, anchor="w", font=FONTS["body"],
+                             padx=px(self.LEAD_INSET if self.lead else self.PLAIN_INSET), pady=0)
+            for sequence in ("<ButtonPress-1>", "<ButtonRelease-1>", "<Double-Button-1>", "<Button-3>"):
+                label.bind(sequence, lambda event, s=sequence, l=label: self.forward(event, s, l))
+            label.bind("<MouseWheel>", lambda event: (self.tree.event_generate("<MouseWheel>", delta=event.delta,
+                                                                               x=0, y=0), "break")[1])
+            self.labels.append(label)
+        return self.labels[index]
+
+    def forward(self, event, sequence, label):
+        """Hand a click on a label to the table, at the same point, so it selects or opens the row under it."""
+        if sequence == "<ButtonPress-1>": self.tree.focus_set()
+        self.tree.event_generate(sequence, x=label.winfo_x() + event.x, y=label.winfo_y() + event.y,
+                                 rootx=event.x_root, rooty=event.y_root, state=event.state)
+        return "break"
+
+    def refresh(self):
+        self.pending = None
+        tree = self.tree
+        try:
+            if not tree.winfo_exists(): return
+        except tk.TclError:
+            return
+        used = 0
+        if tree.winfo_ismapped():
+            selected = set(tree.selection())
+            try: focused = tree.focus_get() is tree
+            except (KeyError, tk.TclError): focused = False  # A popup menu has the focus.
+            text_font, seen = font(tree, "body"), False
+            for item in tree.get_children(""):
+                box = tree.bbox(item, self.column)
+                if not box:
+                    if seen: break  # Past the rows on screen.
+                    continue
+                seen = True
+                value = tree.set(item, self.column)
+                colour = None if self.skip(item) else self.colour(value)
+                if not colour: continue
+                x, y, width, height = box
+                room = width - px((self.LEAD_INSET if self.lead else self.PLAIN_INSET) + 6)
+                label = self.label(used); used += 1
+                label.configure(text=ellipsize(value, text_font, max(0, room)), fg=colour,
+                                bg=self.background(item, selected, focused))
+                label.place(x=x, y=y, width=width, height=height)
+                label.lift()
+        for label in self.labels[used:]:
+            if label.winfo_manager(): label.place_forget()
+
+
 def _focus_step(widget, step):
     target = widget.tk_focusNext() if step > 0 else widget.tk_focusPrev()
     if target is not None: target.focus_set()
