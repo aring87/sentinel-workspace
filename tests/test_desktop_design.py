@@ -109,6 +109,16 @@ class DesignTests(unittest.TestCase):
         page.search.set("missing");page.render_soon.flush();self.assertFalse(page.tree.get_children())
         self.app.clear_selection();self.assertFalse(page.rows)
 
+    def test_rule_dot_follows_enabled_state_not_severity(self):
+        from sentinel_app import ui_kit as kit
+        page=self.app.rules_page
+        page.rows=[dict(name="on",properties=dict(displayName="Same",enabled=True,severity="Informational")),
+                   dict(name="off",properties=dict(displayName="Same",enabled=False,severity="High")),
+                   dict(name="unset",properties=dict(displayName="Same",severity="Medium"))]
+        page.render()
+        dots=[str(self.root.tk.splitlist(page.tree.item(i,"image"))[0]) for i in page.tree.get_children()]
+        self.assertEqual(dots,[str(kit.dot(t,page.tree)) for t in ("success","neutral","warning")])
+
     def test_stale_rule_response_discarded(self):
         app=self.app;app.session=object();app.workspace=dict(WORKSPACE)
         callbacks=[]
