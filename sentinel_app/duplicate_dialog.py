@@ -128,7 +128,17 @@ class DuplicateDialog(ClientPicker):
         self.rules_text = tk.StringVar()
         ttk.Label(options, text="Rules", style="Field.TLabel").grid(row=0, column=0, sticky="nw", padx=(0, px(12)))
         kit.wrap_to_parent(ttk.Label(options, textvariable=self.rules_text, style="Body.TLabel", justify="left", width=1),
-                           minimum=px(200)).grid(row=0, column=1, columnspan=3, sticky="ew")
+                           minimum=px(200)).grid(row=0, column=1, columnspan=2, sticky="ew")
+        # The rules can be chosen here too, so the disable modes don't need a trip back to the Rule library.
+        self.rule_buttons = ttk.Frame(options, style="Card.TFrame")
+        self.rule_buttons.grid(row=0, column=3, sticky="ne", padx=(px(12), 0))
+        self.all_rules_button = ttk.Button(self.rule_buttons, text="All library rules", command=self.all_rules,
+                                           style="Small.Secondary.TButton")
+        self.choose_button = ttk.Button(self.rule_buttons, text="Choose rules…", command=self.choose_rules,
+                                        style="Small.Secondary.TButton")
+        self.all_rules_button.pack(side="left"); self.choose_button.pack(side="left", padx=(px(6), 0))
+        kit.tooltip(self.all_rules_button, "Check every rule in the library")
+        kit.tooltip(self.choose_button, "Tick the library rules to check")
         self.similarity = tk.StringVar(value="90%")
         ttk.Label(options, text="Query similarity", style="Field.TLabel").grid(row=1, column=0, sticky="w",
                                                                               padx=(0, px(12)), pady=(px(8), 0))
@@ -225,14 +235,19 @@ class DuplicateDialog(ClientPicker):
         if mode == "scan":
             self.rules_text.set("Not used: a scan compares the rules in each workspace with each other.")
         elif self.rules:
-            names = ", ".join(rule["name"] for rule in self.rules[:6]) + (f" and {len(self.rules) - 6} more" if len(self.rules) > 6 else "")
-            self.rules_text.set(f"{len(self.rules)} selected in the Rule library: {names}.")
+            total = len(self.snapshot["rules"])
+            if len(self.rules) == total:
+                self.rules_text.set(f"All {total} library rules.")
+            else:
+                names = ", ".join(rule["name"] for rule in self.rules[:6]) + \
+                    (f" and {len(self.rules) - 6} more" if len(self.rules) > 6 else "")
+                self.rules_text.set(f"{len(self.rules)} of {total} library rules: {names}.")
         elif mode == "audit":
-            self.rules_text.set("Every library rule assigned to each client. To check only some, select them in the Rule "
-                                "library, then open Find duplicates.")
+            self.rules_text.set("Every library rule assigned to each client. To check only some, choose them.")
         else:
-            self.rules_text.set("None selected. Select the rules whose copies to disable in the Rule library (Ctrl-click "
-                                "for several), then open Find duplicates.")
+            self.rules_text.set("None chosen yet. Choose the library rules whose copies to disable, or use them all.")
+        if mode == "scan": self.rule_buttons.grid_remove()
+        else: self.rule_buttons.grid()
         disabling = mode.startswith("disable")
         for widget in (self.similar_check,):
             if disabling: widget.grid()
@@ -248,6 +263,20 @@ class DuplicateDialog(ClientPicker):
         else:
             self.invalidate()
 
+    def set_rules(self, rules):
+        """Check these library rules (rule rows from the snapshot), in library order."""
+        if self.locked or self.app.busy: return
+        order = {rule["path"]: index for index, rule in enumerate(self.snapshot["rules"])}
+        self.rules = sorted((rule for rule in rules if rule.get("path") in order), key=lambda rule: order[rule["path"]])
+        self.mode_changed()
+
+    def all_rules(self):
+        self.set_rules(list(self.snapshot["rules"]))
+
+    def choose_rules(self):
+        if self.locked or self.app.busy: return
+        self.chooser = RuleChooser(self, self.snapshot["rules"], {rule["path"] for rule in self.rules}, self.set_rules)
+
     def choices(self):
         mode = self.mode.get()
         return dict(mode=mode, targets=sorted(self.selected), rules=[rule["path"] for rule in self.rules],
@@ -258,7 +287,8 @@ class DuplicateDialog(ClientPicker):
         if not self.window.winfo_exists(): return
         busy = self.app.busy
         editable = not self.locked and not busy
-        for widget in (self.search_box, self.all_button, self.clear_button, self.names_box, self.similar_check):
+        for widget in (self.search_box, self.all_button, self.clear_button, self.names_box, self.similar_check,
+                       self.all_rules_button, self.choose_button):
             widget.configure(state="normal" if editable else "disabled")
         self.similarity_box.configure(state="readonly" if editable else "disabled")
         self.prepare_button.configure(state="normal" if editable else "disabled",
@@ -278,6 +308,7 @@ class DuplicateDialog(ClientPicker):
     def work(self, title, task, done, on_error=None):
         kit.run_in_dialog(self.app, self.window, title, task, done,
                           controls=(self.search_box, self.all_button, self.clear_button, self.prepare_button,
+                                    self.all_rules_button, self.choose_button,
                                     self.start_button, self.status_button, self.save_button, self.last_button,
                                     self.names_box, self.similar_check),
                           say=self.say, page="rules", on_error=on_error, after=self.controls, log_as="Duplicate rules:")
@@ -494,3 +525,73 @@ class DuplicateDialog(ClientPicker):
             self.say("Wait for the current step to finish, then select Close.", "warning"); return
         self.cancel_poll()
         self.window.destroy()
+
+
+class RuleChooser(ClientPicker):
+    """Tick the library rules a duplicate run checks: search by name or file, tick all shown or clear, then
+    Use these rules. Nothing changes in the dialog until then."""
+
+    def __init__(self, owner, rules, chosen, done):
+        self.owner, self.app, self.rules, self.done = owner, owner.app, list(rules), done
+        self.selected, self.visible, self.locked = set(chosen), {}, False
+        self.window = window = tk.Toplevel(owner.window)
+        window.title("Choose library rules"); window.configure(bg=COLORS["card"])
+        body = ttk.Frame(window, style="Card.TFrame", padding=(kit.space("xl"), px(20), kit.space("xl"), px(18)))
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Choose library rules", style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(body, text="The run looks for copies of the rules you tick in each client's workspace.",
+                  style="CardSubtitle.TLabel").pack(anchor="w", pady=(px(2), px(12)))
+        actions, buttons = kit.action_row(body, primary=("Use these rules", self.use), close=("Cancel", window.destroy))
+        actions.pack(side="bottom", fill="x", pady=(px(14), 0))
+        self.use_button = buttons[0]
+        bar = ttk.Frame(body, style="Card.TFrame"); bar.pack(fill="x", pady=(0, px(8)))
+        self.search = tk.StringVar()
+        self.search_box = ttk.Entry(bar, textvariable=self.search)
+        self.search_box.pack(side="left", fill="x", expand=True)
+        kit.placeholder(self.search_box, self.search, "Search rules or files", search=True)
+        ttk.Button(bar, text="Clear", command=self.clear, style="Small.Secondary.TButton").pack(side="right")
+        ttk.Button(bar, text="Tick all shown", command=self.toggle_all, style="Small.Secondary.TButton").pack(
+            side="right", padx=(px(8), px(8)))
+        self.count = tk.StringVar()
+        ttk.Label(body, textvariable=self.count, style="Hint.TLabel").pack(anchor="w", pady=(0, px(6)))
+        frame, self.clients, self.empty = kit.table(body, (("rule", "Rule", 260, True), ("state", "State", 90, False),
+                                                           ("file", "File", 300, True)), height=12, check=True)
+        frame.pack(fill="both", expand=True)
+        self.pickable()
+        actions.lift()
+        self.filter = kit.debounce(window, 150, self.render)
+        self.search.trace_add("write", self.filter)
+        kit.link_search(self.search_box, self.clients)
+        kit.place_dialog(window, owner.window, 820, 640, 640, 480)
+        kit.modal(window, owner.window, window.destroy, primary=self.use_button, focus=self.search_box)
+        self.render()
+
+    def render(self, *args):
+        self.filter.cancel()
+        self.clients.delete(*self.clients.get_children()); self.visible = {}
+        term = self.search.get().strip().casefold()
+        for index, rule in enumerate(self.rules):
+            if term and term not in (rule["name"] + " " + rule["path"]).casefold(): continue
+            self.visible[str(index)] = rule["path"]
+            self.clients.insert("", "end", iid=str(index), image=self.box(rule["path"]),
+                                values=(rule["name"], rule.get("state", ""), rule["path"]))
+        if self.visible: self.empty.hide()
+        else: self.empty.show("No rules match your search.", ("Clear search", lambda: self.search.set("")))
+        self.paint()
+
+    def count_text(self):
+        return f"{len(self.selected)} of {len(self.rules)} rules ticked"
+
+    def invalidate(self):
+        pass  # Nothing to undo: the choice only counts once Use these rules is pressed.
+
+    def toggle_all(self):
+        if self.visible: self.selected |= set(self.visible.values()); self.paint(self.visible)
+
+    def clear(self):
+        self.selected.clear(); self.paint(self.visible)
+
+    def use(self):
+        chosen = [rule for rule in self.rules if rule["path"] in self.selected]
+        self.window.destroy()
+        self.done(chosen)

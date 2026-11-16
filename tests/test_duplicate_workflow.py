@@ -316,9 +316,28 @@ class DialogTests(unittest.TestCase):
                              ["rule-duplicates-run12.csv", "rule-duplicates-run12.xlsx"])
         self.assertIn("the Word report couldn't be made: broken", self.dialog.notice.get())
 
+    def test_rules_can_be_chosen_in_the_dialog(self):
+        rules = self.snapshot["rules"]
+        self.dialog.mode.set("disable-preview")
+        self.dialog.all_rules()  # Every library rule, without going back to the Rule library.
+        self.assertEqual([r["path"] for r in self.dialog.rules], [r["path"] for r in rules])
+        self.assertEqual(self.dialog.rules_text.get(), f"All {len(rules)} library rules.")
+        self.dialog.prepare()
+        self.assertEqual(self.dialog.record["plan"]["rules"], sorted(r["path"] for r in rules))
+        with patch("sentinel_app.duplicate_dialog.kit.modal"):
+            self.dialog.choose_rules()
+        picker = self.dialog.chooser
+        picker.clear(); picker.toggle(next(iter(picker.visible)))
+        self.assertEqual(picker.count.get(), f"1 of {len(rules)} rules ticked")
+        picker.use()
+        self.assertEqual(len(self.dialog.rules), 1)
+        self.assertIsNone(self.dialog.record)  # A new choice needs a new check.
+        self.dialog.mode.set("scan")
+        self.assertFalse(self.dialog.rule_buttons.winfo_manager())  # A scan uses no library rules.
+
     def test_disable_without_rules_says_how_and_disable_apply_asks_first(self):
         self.dialog.mode.set("disable-preview")
-        self.assertIn("None selected", self.dialog.rules_text.get())
+        self.assertIn("None chosen yet", self.dialog.rules_text.get())
         self.dialog.prepare()
         self.assertIn("Choose the library rules", self.dialog.notice.get())
         self.dialog.window.destroy(); self.open([self.snapshot["rules"][0]])

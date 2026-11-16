@@ -143,8 +143,8 @@ class DuplicateService:
         require(all(p in paths for p in rules), "A selected rule isn't in the library on main. Select Refresh library.")
         require(all("," not in p for p in rules), "A rule path holds a comma, which the workflow can't take.")
         if mode.startswith("disable"):
-            require(rules, "Choose the library rules whose copies to disable: select them in the Rule library, then "
-                    "open Find duplicates again.")
+            require(rules, "Choose the library rules whose copies to disable: All library rules, or Choose rules… "
+                    "beside Rules.")
         typed = extra_names if isinstance(extra_names, str) else "\n".join(extra_names or ())
         names = split_names(typed) if mode != "scan" else []
         workflow = self.read_workflow(snapshot, repository)
