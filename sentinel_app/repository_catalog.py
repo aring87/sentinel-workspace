@@ -1,5 +1,6 @@
 """Read-only repository catalog. Never imports or executes repository scripts."""
 import base64
+import hashlib
 import json
 import os
 import re
@@ -13,8 +14,20 @@ from urllib.parse import quote
 
 MAX_FILE = 2 * 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
-MAX_FILES = 2000
+MAX_FILES = 5000
 BLOB_WORKERS = 8
+
+
+def blob_cache():
+    """Where fetched file contents are kept between reads, by Git blob SHA. A blob's SHA is a hash of its
+    content, so a cached copy never goes stale: a refresh downloads only files that are new or changed,
+    instead of one request per file (about 1,650 for the library, against GitHub's 5,000 an hour)."""
+    from .paths import DATA
+    return Path(DATA) / "github-cache" / "blobs"
+
+
+def git_blob_sha(raw):
+    return hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
 
 
 class CatalogError(ValueError):
@@ -171,8 +184,11 @@ def load_local(folder):
 
 class GitHubReader:
     """Temporary CLI authentication adapter. All network requests are explicit GETs."""
-    def __init__(self, request=None):
+    def __init__(self, request=None, cache=None):
+        """``cache``: a folder for fetched files; by default the app's own (blob_cache()) when it reads GitHub
+        itself, and none when a test or caller supplies ``request``."""
         self.request = request or self.get
+        self.cache = cache if cache is not None else (None if request else blob_cache())
 
     @staticmethod
     def get(endpoint):
@@ -224,21 +240,38 @@ class GitHubReader:
             wanted.append(entry)
         if sum(entry.get("size", 0) for entry in wanted) > MAX_TOTAL:
             raise CatalogError("Catalog exceeds its file size limit.")
-        # Each blob is a separate CLI round trip; fetch them concurrently, then check in tree order.
+        # Each blob not already cached is a separate CLI round trip; fetch them concurrently, then check in tree order.
+        cache = self.cache
         fetched, lock = [0], threading.Lock()
+        def cached(sha):
+            if cache is None or not re.fullmatch(r"[0-9a-f]{40}", str(sha)): return None
+            try: raw = (cache / sha[:2] / sha).read_bytes()
+            except OSError: return None
+            return raw if git_blob_sha(raw) == sha else None  # A damaged or edited copy is fetched again.
+        def keep(sha, raw):
+            if cache is None or git_blob_sha(raw) != sha: return
+            try:
+                folder = cache / sha[:2]; folder.mkdir(parents=True, exist_ok=True)
+                temporary = folder / (sha + ".tmp" + str(threading.get_ident()))
+                temporary.write_bytes(raw); os.replace(temporary, folder / sha)
+            except OSError:
+                pass  # The cache only saves requests; a read never fails because of it.
         def fetch(entry):
-            blob = self.request(prefix + "/git/blobs/" + entry["sha"])
+            raw = cached(entry["sha"])
+            if raw is None:
+                blob = self.request(prefix + "/git/blobs/" + entry["sha"])
+                if blob.get("encoding") != "base64":
+                    raise CatalogError("GitHub returned an unsupported blob encoding.")
+                raw = base64.b64decode(blob["content"])
+                keep(entry["sha"], raw)
             with lock:
                 fetched[0] += 1; count = fetched[0]
             if progress: progress(count, len(wanted))
-            return blob
+            return raw
         with ThreadPoolExecutor(max_workers=BLOB_WORKERS) as pool:
             blobs = list(pool.map(fetch, wanted))
-        for entry, blob in zip(wanted, blobs):
+        for entry, raw in zip(wanted, blobs):
             path = entry["path"]
-            if blob.get("encoding") != "base64":
-                raise CatalogError("GitHub returned an unsupported blob encoding.")
-            raw = base64.b64decode(blob["content"])
             total += len(raw)
             if len(raw) > MAX_FILE or total > MAX_TOTAL:
                 raise CatalogError("Catalog exceeds its file size limit.")
