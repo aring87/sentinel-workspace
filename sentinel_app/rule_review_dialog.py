@@ -33,7 +33,7 @@ def new_rule_path(form):
     filename = re.sub(r"[^a-z0-9]+", "-", form["name"].lower()).strip("-")[:80] or "new-rule"
     first = next((t.strip() for t in str(form.get("tactics", "")).split(",") if t.strip()), "")
     folder = re.sub(r"(?<!^)(?=[A-Z])", "-", first).lower() if re.fullmatch(r"[A-Za-z]+", first) else "uncategorized"
-    return "rules/sentinel/" + folder + "/" + filename + ".yml"
+    return "rules/sentinel/baseline/" + folder + "/" + filename + ".yml"
 
 
 class ReviewDialog:

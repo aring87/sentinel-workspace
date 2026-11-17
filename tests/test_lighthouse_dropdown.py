@@ -131,7 +131,7 @@ class FakeGitHub:
 
 
 class UpdateDropdownsTests(unittest.TestCase):
-    def config(self, rule="rules/sentinel/testing/pipeline-connection-test.yml"):
+    def config(self, rule="rules/sentinel/baseline/testing/pipeline-connection-test.yml"):
         config = json.loads((BASE / "examples/lighthouse-onboarding.example.json").read_text(encoding="utf-8"))
         config.update(client="new-client", workspace_label="workspace", initial_rule_path=rule)
         return config

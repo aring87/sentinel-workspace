@@ -20,7 +20,7 @@ def config():
         workspace_name="law-example-sentinel", client="acme", workspace_label="primary",
         github_owner="test-org", github_repo="detections", app_owner_user_ids=[gid(3)],
         production_reviewers=[{"type":"User", "name":"reviewer"}], oidc_subject_format="immutable",
-        initial_rule_path="rules/sentinel/testing/test.yml", human_groups=[])
+        initial_rule_path="rules/sentinel/baseline/testing/test.yml", human_groups=[])
 
 class Cloud:
     def __init__(self, apply=False):

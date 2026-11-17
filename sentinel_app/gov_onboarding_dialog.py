@@ -10,7 +10,7 @@ from .desktop_theme import COLORS, px
 from .gov_onboarding import DEFAULT_LABEL
 from .rules_page import CopyValues
 
-DEFAULT_RULE = "rules/sentinel/testing/pipeline-connection-test.yml"
+DEFAULT_RULE = "rules/sentinel/baseline/testing/pipeline-connection-test.yml"
 PR_LINK = re.compile(r"Review pull request: (https://github\.com/\S+)")
 
 
