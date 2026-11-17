@@ -10,7 +10,7 @@ import subprocess
 from urllib.parse import quote, urlencode
 import uuid
 
-from .repository_catalog import GitHubReader, category, parse_yaml
+from .repository_catalog import GitHubReader, category, parse_yaml, rate_limit_message
 from .rule_drafts import atomic_write, read_bounded
 from . import rule_schema
 
@@ -38,6 +38,8 @@ def api(method, endpoint, body=None):
     except subprocess.TimeoutExpired as error:
         raise ReviewError("GitHub timed out. A write may have completed. Use the same saved review request to recover it.") from error
     if result.returncode:
+        limited = rate_limit_message(result.stderr, executable)
+        if limited: raise ReviewError(limited)
         # Avoid echoing private query content or credentials from CLI output.
         raise ReviewError("GitHub request failed. Check GitHub sign-in, organization access and Contents/Pull requests permissions. "
                           "Keep this review request to recover any completed writes.")

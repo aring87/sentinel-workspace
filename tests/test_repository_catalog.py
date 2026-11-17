@@ -98,3 +98,27 @@ class CatalogTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+class RateLimitMessageTests(unittest.TestCase):
+    """GitHub's request limits read as what they are, not as a sign-in problem."""
+    def test_hourly_limit_names_the_reset_time(self):
+        from unittest import mock
+        from datetime import datetime
+        from sentinel_app.repository_catalog import rate_limit_message, GitHubReader, CatalogError
+        reset = int(datetime(2026, 11, 17, 15, 1).timestamp())
+        answer = mock.Mock(returncode=0, stdout=str(reset) + "\n")
+        with mock.patch("sentinel_app.repository_catalog.subprocess.run", return_value=answer):
+            text = rate_limit_message("gh: API rate limit exceeded for user ID 1. (HTTP 403)", "gh")
+        self.assertIn("hourly request limit for your account is used up; it resets at 15:01", text)
+        self.assertNotIn("signed in", text)
+        failed = mock.Mock(returncode=1, stderr="gh: API rate limit exceeded for user ID 1. (HTTP 403)", stdout="")
+        with mock.patch("sentinel_app.repository_catalog.shutil.which", return_value="gh"), \
+             mock.patch("sentinel_app.repository_catalog.subprocess.run", side_effect=[failed, answer]):
+            with self.assertRaisesRegex(CatalogError, "resets at 15:01"):
+                GitHubReader.get("user")
+
+    def test_other_failures_and_the_secondary_limit(self):
+        from sentinel_app.repository_catalog import rate_limit_message
+        self.assertIsNone(rate_limit_message("gh: Not Found (HTTP 404)", "gh"))
+        self.assertIn("Wait a few minutes", rate_limit_message(b"You have exceeded a secondary rate limit", "gh"))

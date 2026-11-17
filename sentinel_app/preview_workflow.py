@@ -10,7 +10,7 @@ import subprocess
 from urllib.parse import quote
 import uuid
 
-from .repository_catalog import GitHubReader, parse_yaml, MAX_FILE, state
+from .repository_catalog import GitHubReader, parse_yaml, rate_limit_message, MAX_FILE, state
 from .repository_reviews import fingerprint, require, ReviewError
 from .rule_drafts import atomic_write
 
@@ -30,6 +30,8 @@ def api(method, endpoint, body=None):
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired as error:
         raise ReviewError("GitHub timed out. A submitted workflow may still have started; check Actions before starting another.") from error
+    limited = rate_limit_message(result.stderr, executable) if result.returncode else None
+    if limited: raise ReviewError(limited)
     require(result.returncode == 0, "GitHub request failed. Check sign-in, organization access and Actions permissions. "
             "If submission was attempted, check Actions before starting another run.")
     if not result.stdout.strip(): return None
