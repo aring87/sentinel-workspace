@@ -100,7 +100,7 @@ library rules to choose:
 |---|---|
 | **Scan workspaces** | Read-only. Groups the rules in each workspace that look like copies of each other (same name, same template or a similar query), whether or not the library manages them. |
 | **Preview cleanup** | Read-only dry run of Clean up duplicates: for every group of two or more enabled look-alike rules, the one rule it would keep and the others it would disable. |
-| **Clean up duplicates** | Keeps one rule enabled in each such group and disables (never deletes) the rest. The rule kept is the library rule when the group has one (so the pipeline never turns a disabled copy back on), otherwise the most recently modified. A group with two enabled library rules is skipped: change it in the library. It asks you first, and GitHub asks for approval of the production environment before the run changes anything. |
+| **Clean up duplicates** | Keeps one rule enabled in each such group and disables (never deletes) the rest. The rule kept is the library rule when the group has one (so the pipeline never turns a disabled copy back on), otherwise the most recently modified. A group with two enabled library rules is skipped: change it in the library. With **Only disable exact copies** (ticked to start with), a rule is disabled only when its query is identical to the rule kept (comments, spacing and case aside); the others are listed as **Review** and left enabled. It asks you first, and GitHub asks for approval of the production environment before the run changes anything. |
 
 **From library rules** works from the library rules you choose:
 
