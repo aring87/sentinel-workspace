@@ -21,7 +21,9 @@ MAX_LOG_RECORDS = 100000
 MIN_LOG_WINDOW = timedelta(minutes=1)
 
 CONFIGURATIONS = {
-    "rules": ("Analytics rules", "alertRules", "2025-06-01"),
+    # The version the detection pipeline deploys with (rule_schema.API_VERSION). Newer GA versions leave properties
+    # such as subTechniques out, and Drift listed NRT client rules as missing from the workspace.
+    "rules": ("Analytics rules", "alertRules", "2023-12-01-preview"),
     "connectors": ("Data connectors", "dataConnectors", "2025-06-01"),
     "automation": ("Automation rules", "automationRules", "2025-06-01"),
     "settings": ("Sentinel settings", "settings", "2025-07-01-preview"),

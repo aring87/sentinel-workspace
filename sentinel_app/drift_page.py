@@ -410,8 +410,10 @@ class DriftPage:
             self.empty.show(f"{len(targets)} library targets deploy to {name}: {', '.join(targets)}. Change the library "
                             "so only one does, then select Refresh library.")
             return
-        self.summary.set(f"{self.target()} in the library, against {name}  ·  "
-                         f"{plural(result['in_sync'], 'rule')} in step")
+        skipped = result.get("client_rules", 0)
+        self.summary.set(f"{self.target()}'s baseline, against {name}  ·  "
+                         f"{plural(result['in_sync'], 'rule')} in step"
+                         + (f"  ·  {plural(skipped, 'client rule')} not compared" if skipped else ""))
         if self.tree.get_children(): self.empty.hide()
         elif self.entries:
             term, kind = self.search.get().strip(), self.filter.get()
@@ -419,8 +421,8 @@ class DriftPage:
                 ("" if kind == "all" else f" with the {KIND_LABELS[kind]} filter") + "."
             self.empty.show(text, ("Clear search and filter", self.clear_filters))
         else:
-            self.empty.show(f"No drift. The {plural(result['assigned'], 'rule')} the library assigns to {self.target()} "
-                            f"match {name}, and {name} has no other rules.")
+            self.empty.show(f"No drift. The {plural(result['assigned'], 'baseline rule')} assigned to {self.target()} "
+                            f"match {name}, and {name} has no other rules outside its client rules.")
 
     def clear_filters(self):
         self.search.set(""); self.filter.set("all")

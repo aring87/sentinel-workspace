@@ -13,6 +13,15 @@ MATCHES = (("workspace ID", ("workspace_id",)),
            ("tenant and workspace name", ("tenant_id", "workspace_name")))
 
 
+# A client's own rules (rules/sentinel/clients/<client>/) were extracted from its workspace and mirror it, so Drift
+# compares the shared baseline only and leaves client rules out on both sides.
+CLIENT_RULES = "rules/sentinel/clients/"
+
+
+def is_client_rule(rule):
+    return bool(rule) and str(rule.get("path") or "").replace("\\", "/").startswith(CLIENT_RULES)
+
+
 def key(value):
     """A comparable form of an Azure identifier or name: trimmed, lower case; '' for nothing."""
     return str(value if value is not None else "").strip().lower()
@@ -74,13 +83,16 @@ def drift(snapshot, records, workspace):
     Returns a dict with ``status``: 'no_target' (no library target deploys to the workspace),
     'ambiguous' (several do; ``targets`` names them) or 'ok', and for 'ok' the matched ``client``,
     ``how`` it matched, ``entries`` (missing, then different, then live-only, each by name),
-    ``in_sync`` (assigned rules that match), ``unavailable`` assigned paths and ``assigned``."""
+    ``in_sync`` (assigned rules that match), ``unavailable`` assigned paths, ``assigned`` and ``client_rules``
+    (the target's own client rules, left out: Drift compares the baseline)."""
     targets, how = match_targets(snapshot["clients"], workspace)
     if not targets: return dict(status="no_target", targets=[], how=None, entries=[])
     if len(targets) > 1:
         return dict(status="ambiguous", targets=[client["target"] for client in targets], how=how, entries=[])
     client = targets[0]
     expected, unavailable = expected_rules(snapshot, client)
+    client_rules = sum(1 for plan in expected.values() if is_client_rule(plan["rule"]))
+    expected = {rule_id: plan for rule_id, plan in expected.items() if not is_client_rule(plan["rule"])}
     live = {}
     for row in records:
         live.setdefault(key(row.get("name")), row)
@@ -101,8 +113,9 @@ def drift(snapshot, records, workspace):
     for rule_id, row in live.items():
         if rule_id in expected: continue
         rule = library.get(rule_id)  # In the library, but not assigned to this target.
+        if is_client_rule(rule): continue  # Another client's own rule: not part of the baseline.
         entries.append(dict(id=rule_id or str(row.get("name") or ""), name=rule_values(row)[0], kind=LIVE_ONLY, live=row,
                             rule=rule, effective=dict(rule["raw"]) if rule else None, overrides={}, differences=[]))
     entries.sort(key=lambda entry: (KIND_ORDER.index(entry["kind"]), entry["name"].casefold(), entry["id"]))
     return dict(status="ok", targets=[client["target"]], how=how, client=client, entries=entries,
-                in_sync=in_sync, unavailable=unavailable, assigned=len(expected))
+                in_sync=in_sync, unavailable=unavailable, assigned=len(expected), client_rules=client_rules)

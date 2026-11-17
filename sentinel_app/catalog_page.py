@@ -44,6 +44,17 @@ def overrides_text(overrides):
     return ", ".join(f"{key}: {json.dumps(value, default=str)}" for key, value in (overrides or {}).items()) or "None"
 
 
+# Which part of the rule library a rule belongs to: the shared baseline or one client's own rules (the layout the
+# detection repository uses: rules/sentinel/baseline/ and rules/sentinel/clients/<client>/).
+SCOPES = (("All rules", "All rules"), ("Baseline", "Baseline"), ("Client rules", "Client rules"))
+CLIENT_RULES = "rules/sentinel/clients/"
+
+
+def rule_scope(path):
+    """'Client rules' for a file under rules/sentinel/clients/, else 'Baseline'."""
+    return "Client rules" if str(path or "").replace("\\", "/").startswith(CLIENT_RULES) else "Baseline"
+
+
 def row_values(row):
     return (row["name"], row["state"], row.get("workspace", row.get("severity")), row.get("target", row["path"]))
 
@@ -57,6 +68,8 @@ class CatalogPage:
         view = app.ui_state.get("library_view")
         self.view = tk.StringVar(value=view if isinstance(view, str) and view in HEADINGS else "Rules")
         self.filter = tk.StringVar(value="All states")
+        scope = app.ui_state.get("library_scope")
+        self.scope = tk.StringVar(value=scope if scope in dict(SCOPES) else "All rules")
         self.sort = ("name", False)
         self.source_open = False  # The analyst asked to change the source.
         self.searchable = (None, {})  # (snapshot, {kind: search text per row}), built once per library.
@@ -78,6 +91,7 @@ class CatalogPage:
         self.search.trace_add("write", self.render_soon)
         self.view.trace_add("write", lambda *args: (self.note.set(""), self.render()))
         self.filter.trace_add("write", lambda *args: self.render())
+        self.scope.trace_add("write", lambda *args: self.render())
         self.note.trace_add("write", lambda *args: self.show_note())
         if "/" in self.github_repository(): self.mode.set("GitHub repository")
         else: self.mode_changed()
@@ -162,6 +176,11 @@ class CatalogPage:
                                             command=self.find_duplicates, state="disabled")
         kit.tooltip(self.duplicates_button, "Run the library's duplicate workflow on GitHub across client workspaces, "
                                             "then save its CSV and colour-coded Excel reports")
+        # Baseline rules or client rules only: over a thousand client rules sit beside the 81 baseline rules.
+        self.scope_bar = kit.Segmented(self.commands, self.scope, SCOPES, compact=True)
+        self.scope_bar.pack(side="right")
+        kit.tooltip(self.scope_bar, "Baseline: rules/sentinel/baseline/. Client rules: each client's own rules, "
+                                    "under rules/sentinel/clients/")
         self.commands.bind("<Configure>", lambda event: self.fit_commands(), add="+")
         # Ctrl- or Shift-click selects several rules, to assign them together.
         self.table_frame, self.tree, self.empty = kit.table(body, COLUMNS, height=6, sort=self.sort_by, menu=self.row_menu,
@@ -539,8 +558,17 @@ class CatalogPage:
             self.show_row(None); self.sync_actions(); self.app.drift_changed(); return
         if self.searchable[0] is not self.snapshot: self.index()
         needle = self.search.get().strip().casefold()
+        rules_view = kind == "Rules"
+        if rules_view and not self.scope_bar.winfo_manager(): self.scope_bar.pack(side="right")
+        elif not rules_view and self.scope_bar.winfo_manager(): self.scope_bar.pack_forget()
+        counts = {"All rules": len(self.snapshot["rules"])}
+        for rule in self.snapshot["rules"]:
+            counts[rule_scope(rule["path"])] = counts.get(rule_scope(rule["path"]), 0) + 1
+        for value, _ in SCOPES: self.scope_bar.set_label(value, f"{dict(SCOPES)[value]} {counts.get(value, 0)}")
+        scope = self.scope.get()
         for row, text in self.ordered(self.snapshot[kind.lower()], self.searchable[1][kind.lower()]):
             if self.filter.get() not in ("All states", row["state"]): continue
+            if rules_view and scope != "All rules" and rule_scope(row["path"]) != scope: continue
             if needle and needle not in text: continue
             self.tree.insert("", "end", iid=str(len(self.visible)), values=row_values(row),
                              tags=("muted",) if row["state"] != "Enabled" else ())
@@ -555,8 +583,9 @@ class CatalogPage:
         else:
             self.show_row(None)
         if self.visible: self.empty.hide()
-        else: self.empty.show("Nothing matches the current search and state filter.",
-                              ("Clear search and filter", lambda: (self.search.set(""), self.filter.set("All states"))))
+        else: self.empty.show("Nothing matches the current search and filters.",
+                              ("Clear search and filters", lambda: (self.search.set(""), self.filter.set("All states"),
+                                                                    self.scope.set("All rules"))))
         self.sync_actions()
         self.app.drift_changed()  # The drift view compares against this library.
 

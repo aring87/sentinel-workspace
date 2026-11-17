@@ -274,7 +274,7 @@ class App:
             return {}
         if not isinstance(value, dict): return {}
         def usable(key, item):
-            if key in ("rule_view", "library_view", "geometry", "client", "kql_theme"): return isinstance(item, str)
+            if key in ("rule_view", "library_view", "library_scope", "geometry", "client", "kql_theme"): return isinstance(item, str)
             if key in ("rules_split", "library_split", "drift_split"):
                 return isinstance(item, (int, float)) and not isinstance(item, bool) and math.isfinite(item)
             if key == "last_workspace": return isinstance(item, dict)
@@ -294,6 +294,7 @@ class App:
             state["rule_view"] = self.rule_view.get()
             state["rules_sort"] = list(self.rules_page.sort)
             state["library_view"] = self.catalog_page.view.get()
+            state["library_scope"] = self.catalog_page.scope.get()
             # A split never shown this session keeps the share saved last time.
             for key, split in (("rules_split", self.rules_page.split), ("library_split", self.catalog_page.split),
                                ("drift_split", self.drift_page.split)):
