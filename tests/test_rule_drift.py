@@ -92,6 +92,19 @@ class DriftTests(unittest.TestCase):
         self.assertEqual((result["in_sync"], result["assigned"]), (1, 3))  # Alpha: rule IDs match whatever their case.
         self.assertEqual(result["unavailable"], ["rules/sentinel/gone.yml"])
 
+    def test_client_rules_are_left_out_on_both_sides(self):
+        own, others = "f0f0f0f0-0000-4000-8000-000000000001", "f0f0f0f0-0000-4000-8000-000000000002"
+        extra = {"rules/sentinel/clients/acme/own.yml": rule_file(own, "Acme own rule", "Low"),
+                 "rules/sentinel/clients/bluestone/theirs.yml": rule_file(others, "Bluestone own rule", "Low")}
+        snapshot = library(extra=extra)
+        acme = next(client for client in snapshot["clients"] if client["target"] == "acme-primary")
+        acme["assignments"].append(dict(path="rules/sentinel/clients/acme/own.yml"))
+        records = RECORDS + [live(others, "Bluestone own rule", severity="Low")]  # Acme's own rule isn't live: not missing.
+        result = drift(snapshot, records, WORKSPACE)
+        names = [entry["name"] for entry in result["entries"]]
+        self.assertNotIn("Acme own rule", names); self.assertNotIn("Bluestone own rule", names)
+        self.assertEqual((result["assigned"], result["client_rules"]), (3, 1))
+
     def test_enabled_override_and_unset_values(self):
         files = {"rules/sentinel/f.yml": json.dumps(dict(id="f", name="Foxtrot", severity="High")).encode(),
                  "clients/acme/acme-primary.yml": target_file(
@@ -177,7 +190,7 @@ class DriftPageTests(unittest.TestCase):
             ("Advanced multistage attack", "Not in library", "—", "Enabled · High"),
             ("Delta", "Not assigned here", "—", "Enabled · Low")])
         self.assertEqual(self.labels(), ["All 4", "Missing 1", "Different 1", "Only in workspace 2"])
-        self.assertIn("acme-primary in the library, against law-example-sentinel", self.page.summary.get())
+        self.assertIn("acme-primary's baseline, against law-example-sentinel", self.page.summary.get())
         self.assertIn("1 rule in step", self.page.summary.get())
         self.assertIn("1 rule assigned to acme-primary is not in the library", self.page.notice.get())
         self.page.filter.set(MISSING); self.assertEqual([row[0] for row in self.rows()], ["Charlie"])
@@ -248,8 +261,8 @@ class DriftPageTests(unittest.TestCase):
         only = {"clients/acme/acme-primary.yml": target_file("acme-primary", dict(workspace_id=WS), [dict(path="rules/sentinel/a.yml")])}
         self.connect([live(A, "Alpha", severity="High")]); self.load_library(library(extra=only))
         self.assertEqual(self.page.empty.text.get(),
-                         "No drift. The 1 rule the library assigns to acme-primary match law-example-sentinel, "
-                         "and law-example-sentinel has no other rules.")
+                         "No drift. The 1 baseline rule assigned to acme-primary match law-example-sentinel, "
+                         "and law-example-sentinel has no other rules outside its client rules.")
 
     def test_reads_only_through_the_other_views(self):
         self.connect(); self.load_library()
