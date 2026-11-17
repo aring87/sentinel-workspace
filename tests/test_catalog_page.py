@@ -46,6 +46,30 @@ class CatalogPageTests(unittest.TestCase):
     def assigned(self):
         return [self.page.assigned.item(item, "values") for item in self.page.assigned.get_children()]
 
+    def test_scope_switch_shows_baseline_or_client_rules(self):
+        files = fixtures()
+        files["rules/sentinel/baseline/initial-access/base.yml"] = json.dumps(dict(
+            id="44444444-4444-4444-8444-444444444444", name="Baseline rule", severity="Low", enabled=True)).encode()
+        files["rules/sentinel/clients/acme/own.yml"] = json.dumps(dict(
+            id="55555555-5555-4555-8555-555555555555", name="Client rule", severity="Low", enabled=True)).encode()
+        self.page.view.set("Rules")
+        self.page.snapshot = catalog(files, "synthetic", "one"); self.page.render()
+        names = lambda: sorted(self.page.tree.item(item, "values")[0] for item in self.page.tree.get_children())
+        everything = names()
+        self.page.scope.set("Client rules")
+        self.assertEqual(names(), ["Client rule"])
+        self.page.scope.set("Baseline")
+        self.assertNotIn("Client rule", names()); self.assertIn("Baseline rule", names())
+        self.assertEqual(len(names()) + 1, len(everything))
+        self.page.view.set("Clients"); self.assertFalse(self.page.scope_bar.winfo_manager())
+        self.page.view.set("Rules"); self.assertTrue(self.page.scope_bar.winfo_manager())
+        self.app.save_state()  # The choice is kept for next time.
+        self.assertEqual(json.loads((Path(self.temp.name) / "ui-state.json").read_text())["library_scope"], "Baseline")
+        self.cleanup()
+        self.root = tk.Tk(); self.root.withdraw(); self.app = ui.App(self.root); self.root.update()
+        self.page = self.app.catalog_page
+        self.assertEqual(self.page.scope.get(), "Baseline")
+
     def test_filter_and_assignment_state(self):
         self.page.view.set("Clients")
         self.page.snapshot = catalog(fixtures(), "synthetic", "one"); self.page.render()
