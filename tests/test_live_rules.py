@@ -141,10 +141,10 @@ class ConvertTests(unittest.TestCase):
 class NewRulePathTests(unittest.TestCase):
     def test_first_tactic_folder_or_uncategorized(self):
         form = dict(name="Brute force: Entra ID!", tactics="CommandAndControl, InitialAccess")
-        self.assertEqual(new_rule_path(form), "rules/sentinel/command-and-control/brute-force-entra-id.yml")
-        self.assertEqual(new_rule_path(dict(form, tactics="")), "rules/sentinel/uncategorized/brute-force-entra-id.yml")
-        self.assertEqual(new_rule_path(dict(form, tactics="../etc")), "rules/sentinel/uncategorized/brute-force-entra-id.yml")
-        self.assertEqual(new_rule_path(dict(name="!!!", tactics="Impact")), "rules/sentinel/impact/new-rule.yml")
+        self.assertEqual(new_rule_path(form), "rules/sentinel/baseline/command-and-control/brute-force-entra-id.yml")
+        self.assertEqual(new_rule_path(dict(form, tactics="")), "rules/sentinel/baseline/uncategorized/brute-force-entra-id.yml")
+        self.assertEqual(new_rule_path(dict(form, tactics="../etc")), "rules/sentinel/baseline/uncategorized/brute-force-entra-id.yml")
+        self.assertEqual(new_rule_path(dict(name="!!!", tactics="Impact")), "rules/sentinel/baseline/impact/new-rule.yml")
 
 
 if __name__ == "__main__":

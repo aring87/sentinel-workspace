@@ -33,7 +33,7 @@ def config(**changes):
              client="aosense", workspace_label="workspace-gcch", github_owner="isi-security",
              github_repo="detection-as-code", preview_environment="sentinel-preview",
              production_environment="sentinel-production",
-             initial_rule_path="rules/sentinel/testing/pipeline-connection-test.yml", allow_missing_mitre=True)
+             initial_rule_path="rules/sentinel/baseline/testing/pipeline-connection-test.yml", allow_missing_mitre=True)
     c.update(changes)
     return c
 
