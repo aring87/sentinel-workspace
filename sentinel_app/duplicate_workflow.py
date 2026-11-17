@@ -25,7 +25,7 @@ import uuid
 import zipfile
 
 from .preview_workflow import api
-from .repository_catalog import GitHubReader, parse_yaml, MAX_FILE
+from .repository_catalog import GitHubReader, parse_yaml, rate_limit_message, MAX_FILE
 from .repository_reviews import fingerprint, require, ReviewError
 from .rule_drafts import atomic_write
 
@@ -71,6 +71,8 @@ def api_bytes(endpoint):
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired as error:
         raise ReviewError("GitHub took too long to send the reports. Select Refresh status to try again.") from error
+    limited = rate_limit_message(result.stderr, executable) if result.returncode else None
+    if limited: raise ReviewError(limited)
     require(result.returncode == 0, "GitHub couldn't send the run's reports. Check sign-in and access to the "
             "repository's Actions, then select Refresh status.")
     require(len(result.stdout) <= MAX_ARTIFACT, "The run's reports are larger than this app reads. Open the run in GitHub.")

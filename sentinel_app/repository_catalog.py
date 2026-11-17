@@ -30,6 +30,30 @@ def git_blob_sha(raw):
     return hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
 
 
+def rate_limit_message(stderr, executable=None):
+    """The plain message for a GitHub CLI failure caused by GitHub's request limits, or None. ``stderr`` is
+    the CLI's error output (text or bytes). The hourly limit's reset time comes from GitHub's rate_limit
+    endpoint, which doesn't count against the limit."""
+    text = stderr.decode("utf-8", "replace") if isinstance(stderr, bytes) else str(stderr or "")
+    if "rate limit" not in text.lower(): return None
+    if "secondary rate limit" in text.lower():
+        return ("GitHub is briefly limiting requests from your account (too many in a short time). "
+                "Wait a few minutes, then try again.")
+    reset = ""
+    executable = executable or shutil.which("gh")
+    if executable:
+        try:
+            result = subprocess.run([executable, "api", "--hostname", "github.com", "rate_limit",
+                                     "--jq", ".resources.core.reset"], capture_output=True, text=True, timeout=20,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            reset = datetime.fromtimestamp(int(result.stdout.strip())).strftime("%H:%M") if result.returncode == 0 else ""
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            reset = ""
+    return ("GitHub's hourly request limit for your account is used up"
+            + (f"; it resets at {reset}" if reset else "; it resets within the hour")
+            + ". Try again then. The limit is per GitHub account, so other people aren't affected.")
+
+
 class CatalogError(ValueError):
     pass
 
@@ -202,6 +226,8 @@ class GitHubReader:
         except subprocess.TimeoutExpired as exc:
             raise CatalogError("GitHub timed out. Refresh to try this read again.") from exc
         if result.returncode:
+            limited = rate_limit_message(result.stderr, executable)
+            if limited: raise CatalogError(limited)
             raise CatalogError("GitHub read failed. Check the signed-in account, repository name and organization access. "
                                "For a private repository, Not Found can mean no access. Run gh auth login if needed.")
         return json.loads(result.stdout)
