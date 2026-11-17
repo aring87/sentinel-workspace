@@ -168,6 +168,13 @@ class DuplicateDialog(ClientPicker):
         self.similar_check = ttk.Checkbutton(options, text="Also disable rules matched only by a similar query",
                                              variable=self.include_similar)
         self.similar_check.grid(row=1, column=2, columnspan=2, sticky="w", padx=(px(16), 0), pady=(px(8), 0))
+        # The cleanup modes' counterpart, in the same place: a name or template match says nothing about the
+        # query, so by default only a copy whose query is identical to the rule kept is disabled.
+        self.identical_only = tk.BooleanVar(value=True)
+        self.identical_check = ttk.Checkbutton(options, text="Only disable exact copies (query identical to the rule kept)",
+                                               variable=self.identical_only)
+        self.identical_check.grid(row=1, column=2, columnspan=2, sticky="w", padx=(px(16), 0), pady=(px(8), 0))
+        kit.tooltip(self.identical_check, "Other copies in a group are listed for review and left enabled")
         self.names_label = ttk.Label(options, text="Other names", style="Field.TLabel")
         self.names_label.grid(row=2, column=0, sticky="w", padx=(0, px(12)), pady=(px(8), 0))
         self.names = tk.StringVar()
@@ -199,7 +206,7 @@ class DuplicateDialog(ClientPicker):
         kit.link_search(self.search_box, self.clients)
         self.search.trace_add("write", self.filter)
         self.mode.trace_add("write", lambda *args: self.mode_changed())
-        for variable in (self.similarity, self.include_similar, self.names):
+        for variable in (self.similarity, self.include_similar, self.identical_only, self.names):
             variable.trace_add("write", lambda *args: self.invalidate())
         kit.place_dialog(window, app.root, 1040, 820, 860, 700)
         kit.modal(window, app.root, self.close, primary=self.prepare_button, focus=self.search_box)
@@ -268,8 +275,8 @@ class DuplicateDialog(ClientPicker):
         if mode in dupes.SCAN_MODES: self.rule_buttons.grid_remove()
         else: self.rule_buttons.grid()
         disabling = mode.startswith("disable")
-        for widget in (self.similar_check,):
-            if disabling: widget.grid()
+        for widget, shown in ((self.similar_check, disabling), (self.identical_check, mode in dupes.CLEANUP_MODES)):
+            if shown: widget.grid()
             else: widget.grid_remove()
         for widget in (self.names_label, self.names_box):
             if mode in dupes.SCAN_MODES: widget.grid_remove()
@@ -300,14 +307,15 @@ class DuplicateDialog(ClientPicker):
         mode = self.mode.get()
         return dict(mode=mode, targets=sorted(self.selected), rules=[rule["path"] for rule in self.rules],
                     extra_names=self.names.get(), include_similar=bool(self.include_similar.get()),
-                    similarity=int(self.similarity.get().rstrip("%")) / 100)
+                    similarity=int(self.similarity.get().rstrip("%")) / 100,
+                    identical_only=bool(self.identical_only.get()))
 
     def controls(self):
         if not self.window.winfo_exists(): return
         busy = self.app.busy
         editable = not self.locked and not busy
         for widget in (self.search_box, self.all_button, self.clear_button, self.names_box, self.similar_check,
-                       self.all_rules_button, self.choose_button):
+                       self.identical_check, self.all_rules_button, self.choose_button):
             widget.configure(state="normal" if editable else "disabled")
         self.similarity_box.configure(state="readonly" if editable else "disabled")
         for bar in self.mode_bars: bar.render()  # They only redraw on a mode change; locking and unlocking don't.
@@ -330,7 +338,7 @@ class DuplicateDialog(ClientPicker):
                           controls=(self.search_box, self.all_button, self.clear_button, self.prepare_button,
                                     self.all_rules_button, self.choose_button,
                                     self.start_button, self.status_button, self.save_button, self.last_button,
-                                    self.names_box, self.similar_check),
+                                    self.names_box, self.similar_check, self.identical_check),
                           say=self.say, page="rules", on_error=on_error, after=self.controls, log_as="Duplicate rules:")
 
     # ------------------------------------------------------------- check and start
@@ -346,7 +354,8 @@ class DuplicateDialog(ClientPicker):
         self.work("Checking the rule library and the duplicate workflow on GitHub…",
                   lambda: self.service.prepare(self.snapshot["repository"], self.snapshot["revision"], choice["mode"],
                                                choice["targets"], choice["rules"], choice["extra_names"],
-                                               choice["include_similar"], choice["similarity"]), done)
+                                               choice["include_similar"], choice["similarity"],
+                                               choice["identical_only"]), done)
 
     def review_text(self, plan):
         inputs = plan["inputs"]
@@ -362,6 +371,9 @@ class DuplicateDialog(ClientPicker):
         if plan["extra_names"]: lines.append("Also treated as copies: " + "; ".join(plan["extra_names"]))
         if plan["mode"].startswith("disable"):
             lines.append("Disables similar-query-only matches: " + ("yes" if inputs["include_similar"] == "true" else "no"))
+        if plan["mode"] in dupes.CLEANUP_MODES:
+            lines.append("Disables: " + ("only exact copies of the rule kept; the others are listed for review"
+                                         if inputs.get("identical_only") == "true" else "every other enabled rule in a group"))
         lines += ["", "The workflow runs on main with the pipeline's identity. GitHub keeps the reports for 14 days; "
                       "Save reports keeps a copy."]
         return "\n".join(lines)

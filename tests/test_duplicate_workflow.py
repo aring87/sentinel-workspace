@@ -23,7 +23,8 @@ def workflow(**changes):
     inputs = dict(mode=dict(type="choice", options=["scan", "cleanup-preview", "cleanup-apply", "audit",
                                                     "disable-preview", "disable-apply"]),
                   rules=dict(type="string"), targets=dict(type="string"), extra_names=dict(type="string"),
-                  include_similar=dict(type="boolean"), similarity=dict(type="string"))
+                  include_similar=dict(type="boolean"), similarity=dict(type="string"),
+                  identical_only=dict(type="boolean"))
     inputs.update(changes)
     return {"on": {"workflow_dispatch": {"inputs": {k: v for k, v in inputs.items() if v is not None}}}}
 
@@ -120,7 +121,8 @@ class ServiceTests(unittest.TestCase):
     def test_every_enabled_client_is_sent_as_all_and_a_subset_by_name(self):
         record = self.prepare("scan", rules=[EXISTING], extra_names="Old name", include_similar=True)
         self.assertEqual(record["plan"]["inputs"], dict(mode="scan", rules="", targets="all", extra_names="",
-                                                        include_similar="false", similarity="0.90"))
+                                                        include_similar="false", similarity="0.90",
+                                                        identical_only="false"))
         record = self.prepare(targets=["example-primary"], rules=[EXISTING], similarity=0.95)
         self.assertEqual(record["plan"]["inputs"]["targets"], "example-primary")
         self.assertEqual(record["plan"]["inputs"]["rules"], EXISTING)
@@ -159,13 +161,26 @@ class ServiceTests(unittest.TestCase):
         record = self.prepare("cleanup-apply", rules=[EXISTING], extra_names="Old name", include_similar=True,
                               similarity=1.0)
         self.assertEqual(record["plan"]["inputs"], dict(mode="cleanup-apply", rules="", targets="all", extra_names="",
-                                                        include_similar="false", similarity="1.00"))
+                                                        include_similar="false", similarity="1.00",
+                                                        identical_only="false"))
+        exact = self.prepare("cleanup-preview", similarity=1.0, identical_only=True)
+        self.assertEqual(exact["plan"]["inputs"]["identical_only"], "true")
+        # Only the cleanup modes take it.
+        self.assertEqual(self.prepare("scan", identical_only=True)["plan"]["inputs"]["identical_only"], "false")
         # A workflow from before the cleanup modes: Scan still runs; a cleanup run says what to merge.
         self.remote.files[WORKFLOW_PATH] = json.dumps(workflow(mode=dict(
             type="choice", options=["scan", "audit", "disable-preview", "disable-apply"]))).encode()
         self.assertEqual(self.prepare("scan")["plan"]["mode"], "scan")
         with self.assertRaisesRegex(ReviewError, "doesn't offer cleanup-preview yet.*Merge the updated"):
             self.prepare("cleanup-preview")
+
+    def test_a_workflow_without_identical_only_still_runs_but_not_exact_copies_only(self):
+        older = workflow(); del older["on"]["workflow_dispatch"]["inputs"]["identical_only"]
+        self.remote.files[WORKFLOW_PATH] = json.dumps(older).encode()
+        record = self.prepare("cleanup-preview", similarity=1.0)
+        self.assertNotIn("identical_only", record["plan"]["inputs"])  # Never sent to a workflow without it.
+        with self.assertRaisesRegex(ReviewError, "can't yet disable only exact copies"):
+            self.prepare("cleanup-preview", similarity=1.0, identical_only=True)
 
     def test_dispatch_sends_once_and_saves_the_attempt_first(self):
         record = self.prepare()
@@ -226,7 +241,10 @@ class ReportTests(unittest.TestCase):
     def test_cleanup_reports_parse_with_their_own_colours_and_words(self):
         parsed = dupes.parse_report(report(dupes.CLEANUP_FIELDS, CLEANUP_ROWS))
         self.assertEqual(parsed["kind"], "cleanup")
-        self.assertEqual([dupes.tone("cleanup", row) for row in CLEANUP_ROWS], ["info", "warning", "neutral", "neutral"])
+        self.assertEqual([dupes.tone("cleanup", row) for row in CLEANUP_ROWS], ["success", "warning", "neutral", "neutral"])
+        self.assertEqual(dupes.tone("cleanup", dict(action="review: query differs from the rule kept")), "info")
+        self.assertEqual(dupes.action_text("review: query differs from the rule kept"),
+                         "Review: query differs from the rule kept")
         self.assertEqual(dupes.action_text("keep"), "Keep")
         self.assertEqual(dupes.action_text("skip: more than one enabled repo rule, change it in git"),
                          "Skipped: two library rules, change them in the library")
@@ -362,7 +380,13 @@ class DialogTests(unittest.TestCase):
                          [["scan", "cleanup-preview", "cleanup-apply"], ["audit", "disable-preview", "disable-apply"]])
         self.dialog.mode.set("cleanup-apply")
         self.assertFalse(self.dialog.rule_buttons.winfo_manager())  # No library rules to choose.
+        # Exact copies only, ticked to start with; shown for the cleanup modes, in the similar-query box's place.
+        self.assertTrue(self.dialog.identical_only.get())
+        self.assertTrue(self.dialog.identical_check.winfo_manager())
+        self.assertFalse(self.dialog.similar_check.winfo_manager())
         self.dialog.prepare()
+        self.assertEqual(self.dialog.record["plan"]["inputs"]["identical_only"], "true")
+        self.assertIn("Disables: only exact copies of the rule kept", self.dialog.review.get("1.0", "end"))
         self.assertIn("Run: Clean up duplicates (changes workspaces", self.dialog.review.get("1.0", "end"))
         with patch("sentinel_app.duplicate_dialog.kit.confirm", return_value=False) as confirm:
             self.dialog.start()

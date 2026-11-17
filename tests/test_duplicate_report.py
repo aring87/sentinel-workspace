@@ -129,6 +129,13 @@ class ReportTests(unittest.TestCase):
                                            record("cleanup-apply")))
         self.assertIn("Duplicate cleanup report", body)
         self.assertIn("This run disabled 1 rule.", body)
+        review = [CLEANUP_ROWS[0], dict(CLEANUP_ROWS[1], action="review: query differs from the rule kept")]
+        exact = record("cleanup-preview"); exact["plan"]["inputs"]["identical_only"] = "true"
+        reviewed = text(duplicate_report.build(reports("cleanup", "cleanup-preview", rows=review), exact))
+        for words in ("To review (query differs)", "1 rule is left enabled for review", "marked Review",
+                      "this run disabled only exact copies", "Review"):
+            self.assertIn(words, reviewed)
+        self.assertIn("This run disabled 1 rule.", body)
         self.assertIn("found 1 group still with more than one enabled rule", body)
 
     def test_disable_report_counts_what_changed_and_the_audit_after(self):

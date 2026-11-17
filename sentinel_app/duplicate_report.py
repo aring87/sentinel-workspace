@@ -225,9 +225,12 @@ class Report:
             done = sum(action(row) == "disabled" for row in rows)
             skipped = {(row["target"], row["group"]) for row in rows if action(row).startswith("skip")}
             failed = sum(action(row).startswith("FAILED") for row in rows)
-            tiles = [(len(groups), "Duplicate groups", None), (kept, "Kept enabled", "info")]
+            review = sum(action(row).startswith("review") for row in rows)
+            tiles = [(len(groups), "Duplicate groups", None), (kept, "Kept enabled", "success")]
             tiles.append((done, "Disabled by this run", "success") if self.mode == "cleanup-apply"
                          else (would, "Would be disabled", "warning"))
+            if review or self.plan.get("inputs", {}).get("identical_only") == "true":
+                tiles.append((review, "To review (query differs)", "info"))
             tiles.append((len(skipped), "Groups skipped", "neutral"))
             if failed: tiles.append((failed, "Failed", "danger"))
             kpi_tiles(doc, tiles)
@@ -242,6 +245,9 @@ class Report:
                 text += f"This run disabled {plural(done, 'rule')}" + (f", and {failed} failed." if failed else ".")
             else:
                 text += f"Clean up duplicates would disable {plural(would, 'rule')}."
+            if review:
+                text += (f" {plural(review, 'rule is', 'rules are')} left enabled for review: "
+                         f"{'its' if review == 1 else 'their'} query isn't identical to the rule kept.")
             if skipped:
                 text += (f" {plural(len(skipped), 'group was', 'groups were')} skipped because "
                          f"{'it has' if len(skipped) == 1 else 'they have'} more than one enabled library rule.")
@@ -313,19 +319,21 @@ class Report:
             return
         if self.kind == "cleanup":
             last = ("Disabled", "success") if self.mode == "cleanup-apply" else ("Would disable", "warning")
-            columns = [("Client", 3680), ("Groups", 1100), ("Kept", 1100), (last[0], 1500), ("Skipped", 1300),
-                       ("Failed", 1400)]
-            table, totals = [], [0] * 5
+            columns = [("Client", 3080), ("Groups", 1000), ("Kept", 1000), (last[0], 1500), ("Review", 1200),
+                       ("Skipped", 1100), ("Failed", 1200)]
+            table, totals = [], [0] * 6
             for target in targets:
                 mine = [row for row in rows if row["target"] == target]
                 action = lambda row: str(row.get("action") or "")
                 values = [len({row["group"] for row in mine}), sum(action(r) == "keep" for r in mine),
                           sum(action(r) == ("disabled" if last[1] == "success" else "disable") for r in mine),
+                          sum(action(r).startswith("review") for r in mine),
                           sum(action(r).startswith("skip") for r in mine), sum(action(r).startswith("FAILED") for r in mine)]
                 totals = [a + b for a, b in zip(totals, values)]
                 table.append([Cell(self.client_name(target)), Cell(str(values[0]), align="center"),
-                              count_cell(values[1], "info"), count_cell(values[2], last[1]),
-                              count_cell(values[3], "neutral"), count_cell(values[4], "danger")])
+                              count_cell(values[1], "success"), count_cell(values[2], last[1]),
+                              count_cell(values[3], "info"), count_cell(values[4], "neutral"),
+                              count_cell(values[5], "danger")])
             table.append(([Cell("Total", bold=True)] + [Cell(str(v), bold=True, align="center") for v in totals], "E2E8F0"))
             doc.table(columns, table)
             return
@@ -369,7 +377,12 @@ class Report:
             loose = {(row["target"], row["group"]) for row in would if "similar" not in str(row.get("group_match"))}
             skipped = {(row["target"], row["group"]) for row in rows if action(row).startswith("skip")}
             failed = [row for row in rows if action(row).startswith("FAILED")]
-            if would and loose:
+            review = [row for row in rows if action(row).startswith("review")]
+            if review:
+                steps.append(f"Look at the {plural(len(review), 'rule')} marked Review: each is in a group with the rule "
+                             "kept, but its query isn't identical, so it was left enabled. Disable any that are just an "
+                             "older copy in the portal; keep any that detect something the kept rule doesn't.")
+            if would and loose and self.plan.get("inputs", {}).get("identical_only") != "true":
                 steps.append(f"Check the {plural(len(loose), 'group')} matched on name or template alone before "
                              "applying: their queries may differ, so the copy being disabled may have been tuned on purpose.")
             if would and self.mode == "cleanup-preview":
@@ -423,7 +436,8 @@ class Report:
                    ("success", "Only one enabled", "Enabled, and the only enabled rule in its group."),
                    ("neutral", "Disabled", "Disabled in the workspace.")]
         elif self.kind == "cleanup":
-            key = [("info", "Keep", "The one rule left enabled in its group."),
+            key = [("success", "Keep", "The one rule left enabled in its group."),
+                   ("info", "Review", "Its query isn't identical to the rule kept, so it was left enabled."),
                    ("warning", "Would disable", "An enabled rule Clean up duplicates would disable."),
                    ("success", "Disabled", "Disabled by this run."),
                    ("neutral", "Skipped / Already disabled", "A group with more than one enabled library rule, or a "
@@ -509,6 +523,9 @@ class Report:
             doc.bullets(["the rule kept is the library rule when the group has one, so the pipeline never turns a "
                          "disabled copy back on; otherwise the most recently modified rule;",
                          "a group with more than one enabled library rule is skipped: those are changed in the library;",
+                         *(["this run disabled only exact copies: a rule whose query isn't identical to the rule kept "
+                            "(comments, spacing and case aside) was listed for review and left enabled;"]
+                           if self.plan.get("inputs", {}).get("identical_only") == "true" else []),
                          "rules are disabled, never deleted, and only through the library's GitHub workflow after "
                          "approval of its production environment."])
             doc.paragraph("Groups are transitive (if A is like B and B is like C, all three are grouped) and a name or "

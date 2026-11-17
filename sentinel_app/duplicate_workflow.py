@@ -36,10 +36,13 @@ MODES = ("scan", "cleanup-preview", "cleanup-apply", "audit", "disable-preview",
 SCAN_MODES = ("scan", "cleanup-preview", "cleanup-apply")
 # Modes that change workspaces (after GitHub's production approval).
 APPLY_MODES = ("cleanup-apply", "disable-apply")
+CLEANUP_MODES = ("cleanup-preview", "cleanup-apply")
 # The workflow's dispatch inputs and their types. Any other input could change what a run does, so a
 # workflow with different inputs is refused until this adapter is updated (as for previews).
 INPUTS = dict(mode="choice", rules="string", targets="string", extra_names="string", include_similar="boolean",
               similarity="string")
+# Inputs a newer workflow adds; an older one without them still runs, and is sent none of them.
+OPTIONAL_INPUTS = dict(identical_only="boolean")
 # The script's report columns (rule_duplicates.FIELDS and SCAN_FIELDS).
 FIELDS = ["target", "repo_rule", "repo_rule_id", "repo_copy", "dup_rule_id", "dup_name", "dup_enabled",
           "dup_managed_by", "match", "similarity", "action"]
@@ -81,15 +84,17 @@ def check_inputs(workflow, mode=None):
     require(isinstance(event, dict), "The duplicate workflow must support workflow_dispatch.")
     inputs = event.get("inputs")
     require(isinstance(inputs, dict) and all(isinstance(v, dict) for v in inputs.values()), "Invalid duplicate workflow inputs.")
-    require(set(inputs) == set(INPUTS), "The duplicate workflow's inputs changed. Update this app's duplicate adapter "
-            "before running it.")
-    for key, kind in INPUTS.items():
-        require(inputs[key].get("type", "string") == kind, "The duplicate workflow's " + key + " input changed type.")
+    require(set(inputs) - set(OPTIONAL_INPUTS) == set(INPUTS), "The duplicate workflow's inputs changed. Update this "
+            "app's duplicate adapter before running it.")
+    for key, kind in {**INPUTS, **OPTIONAL_INPUTS}.items():
+        if key in inputs:
+            require(inputs[key].get("type", "string") == kind, "The duplicate workflow's " + key + " input changed type.")
     options = inputs["mode"].get("options")
     require(isinstance(options, list), "The duplicate workflow's mode input has no choices.")
     for wanted in ([mode] if mode else MODES):
         require(wanted in options, f"The library's duplicate workflow doesn't offer {wanted} yet. Merge the updated "
                 "sentinel-rule-duplicates.yml into main in the detection repository, then Check again.")
+    return set(inputs) & set(OPTIONAL_INPUTS)
 
 
 def split_names(text):
@@ -129,7 +134,7 @@ class DuplicateService:
         return parse_yaml(base64.b64decode(blob["content"]), yaml12=True)
 
     def prepare(self, repository, revision, mode, targets, rules=(), extra_names=(), include_similar=False,
-                similarity=0.9):
+                similarity=0.9, identical_only=False):
         """Check a run against the library on GitHub now, and return the request to start: nothing starts here."""
         require(mode in MODES, "Unsupported duplicate mode.")
         require(isinstance(similarity, (int, float)) and not isinstance(similarity, bool) and 0.5 <= similarity <= 1,
@@ -157,7 +162,11 @@ class DuplicateService:
         typed = extra_names if isinstance(extra_names, str) else "\n".join(extra_names or ())
         names = split_names(typed) if mode not in SCAN_MODES else []
         workflow = self.read_workflow(snapshot, repository)
-        check_inputs(workflow, mode)
+        offered = check_inputs(workflow, mode)
+        identical_only = bool(identical_only) and mode in CLEANUP_MODES
+        require(not identical_only or "identical_only" in offered, "The library's duplicate workflow can't yet disable "
+                "only exact copies. Merge the updated sentinel-rule-duplicates.yml into main in the detection "
+                "repository, or untick Only disable exact copies, then Check again.")
         info = self.request("GET", "repos/" + repository + "/actions/workflows/" + WORKFLOW)
         require(info.get("path") == WORKFLOW_PATH and info.get("state") == "active", "The duplicate workflow is not "
                 "active in GitHub. Enable it under Actions.")
@@ -166,6 +175,7 @@ class DuplicateService:
                       extra_names=",".join(names),
                       include_similar="true" if include_similar and mode.startswith("disable") else "false",
                       similarity=f"{similarity:.2f}")
+        if "identical_only" in offered: inputs["identical_only"] = "true" if identical_only else "false"
         names_by_target = {t: enabled[t]["name"] for t in targets}
         plan = dict(repository=repository, repository_id=snapshot["repository_id"], revision=revision,
                     identity=snapshot["identity"], branch="main", workflow_id=info["id"], mode=mode, inputs=inputs,
@@ -312,6 +322,7 @@ def action_text(action):
              "skip: also a selected rule": "Skipped: also a selected rule",
              "skip: enabled repo rule, change it in git": "Skipped: a library rule, change it in the library",
              "keep": "Keep",
+             "review: query differs from the rule kept": "Review: query differs from the rule kept",
              "skip: more than one enabled repo rule, change it in git":
                  "Skipped: two library rules, change them in the library"}
     if action in fixed: return fixed[action]
@@ -329,7 +340,7 @@ def tone(kind, row):
         except ValueError: others = 0
         return "danger" if others > 1 else "success"
     action = str(row.get("action") or "")
-    if action == "keep": return "info"  # Blue, as enabled is everywhere in the app.
+    if action == "keep": return "success"  # Green: kept running. Blue is for review, as in the other reports.
     if action.startswith("FAILED"): return "danger"
     if action == "disable": return "warning"
     if action == "disabled": return "success"
@@ -355,7 +366,7 @@ def summary(kind, rows, mode=None):
                  f"{count(lambda a: a == 'keep')} kept"]
         for test, word in ((lambda a: a == "disable", "would be disabled" if mode != "cleanup-apply" else "not disabled"),
                            (lambda a: a == "disabled", "disabled"), (lambda a: a.startswith("FAILED"), "failed"),
-                           (lambda a: a.startswith("skip"), "skipped")):
+                           (lambda a: a.startswith("review"), "to review"), (lambda a: a.startswith("skip"), "skipped")):
             if count(test): parts.append(f"{count(test)} {word}")
         return " · ".join(parts) + "."
     if not rows: return "No copies of the library rules in the selected clients."
