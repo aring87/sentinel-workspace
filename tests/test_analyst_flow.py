@@ -158,6 +158,36 @@ class AnalystFlowTests(unittest.TestCase):
         GitHubReader(request).load("example/detections", lambda done, total: seen.append((done, total)))
         self.assertEqual(sorted(seen), [(1, 2), (2, 2)])
 
+    def test_a_second_github_read_fetches_only_new_or_changed_files(self):
+        import base64, tempfile
+        from sentinel_app.repository_catalog import git_blob_sha
+        files = {"clients/a/a.yml": b"x: 1", "rules/sentinel/r.yml": b"y: 2"}
+        blobs, asked = {}, []
+        def request(endpoint):
+            if endpoint == "user": return {"login": "analyst"}
+            if endpoint == "repos/example/detections": return {"default_branch": "main", "id": 1}
+            if endpoint.endswith("/commits/main"): return {"sha": "c" * 40, "commit": {"tree": {"sha": "t"}}}
+            if "/git/trees/" in endpoint:
+                blobs.clear(); blobs.update({git_blob_sha(v): v for v in files.values()})
+                return {"tree": [{"path": "clients", "type": "tree"}, {"path": "rules/sentinel", "type": "tree"}] +
+                        [{"path": p, "type": "blob", "mode": "100644", "sha": git_blob_sha(v), "size": len(v)}
+                         for p, v in files.items()]}
+            asked.append(endpoint)
+            return {"encoding": "base64", "content": base64.b64encode(blobs[endpoint.split("/git/blobs/")[1]]).decode()}
+        with tempfile.TemporaryDirectory() as folder:
+            reader = GitHubReader(request, cache=Path(folder))
+            first = reader.load("example/detections")
+            self.assertEqual(len(asked), 2)
+            files["rules/sentinel/r.yml"] = b"y: 3"  # One file changes.
+            second = reader.load("example/detections")
+            self.assertEqual(len(asked), 3)  # Only the changed file is fetched again.
+            self.assertEqual(second["files"]["rules/sentinel/r.yml"], b"y: 3")
+            self.assertEqual(second["files"]["clients/a/a.yml"], first["files"]["clients/a/a.yml"])
+            sha = git_blob_sha(b"x: 1")
+            (Path(folder) / sha[:2] / sha).write_bytes(b"tampered")  # A damaged copy is fetched again.
+            self.assertEqual(reader.load("example/detections")["files"]["clients/a/a.yml"], b"x: 1")
+            self.assertEqual(len(asked), 4)
+
 
 class SyncThread:
     """Runs a background check immediately so its result can be asserted."""
