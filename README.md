@@ -64,6 +64,11 @@ Nothing in the app changes a live rule directly.
   In both lists, several selected rules can be assigned in one request. A live rule that is not
   in the library offers **Add to library…**: it is read again at the pipeline's API version,
   converted, proven to deploy back exactly as it is, and opened in the Rule builder as a new rule.
+  Drift compares each client's baseline rules; the client's own rules (`rules/sentinel/clients/`) are
+  left out. The **Client** dropdown switches to any client in the library with the current sign-in
+  (Lighthouse reaches every delegated workspace from the managing tenant), and **All clients…** reads
+  every client's rules and lists each one's missing, different and unassigned counts, with
+  **Open in Drift** and **Save CSV…**.
 - **Rule builder:** five guided steps (Back/Next), a Query box that colours KQL in a choice of
   themes and completes steps, tables, columns and functions as you type, a KQL check as you
   type (unclosed quotes and brackets, misspelt steps, tables, functions and operators, with the

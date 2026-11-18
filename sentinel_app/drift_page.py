@@ -10,6 +10,8 @@ from tkinter import ttk
 from . import ui_kit as kit
 from .assignment_dialog import AssignmentDialog
 from .catalog_page import overrides_text, plural
+from .fleet_dialog import FleetDialog
+from .fleet_drift import fleet
 from .preview_dialog import PreviewDialog
 from . import live_rules, rule_schema
 from .rule_assignments import MAX_RULES
@@ -216,6 +218,10 @@ class DriftPage:
                                          style="Secondary.TButton")
         self.library_button.pack(side="right", padx=(0, px(8)))
         kit.tooltip(self.library_button, "Read the rule library again")
+        self.fleet_button = ttk.Button(card.actions, text="All clients…", command=self.all_clients,
+                                       style="Secondary.TButton")
+        self.fleet_button.pack(side="right", padx=(0, px(8)))
+        kit.tooltip(self.fleet_button, "Read every client's rules and list each client's drift counts (takes a minute or two)")
         # Always usable: it only explains the list.
         # width=0: as wide as its icon and word, not the style's six-character minimum, so the title keeps its room.
         self.key_button = ttk.Button(card.actions, text="Key", image=kit.info_icon(card.actions), compound="left",
@@ -322,6 +328,23 @@ class DriftPage:
         current = self.result["client"]["target"] if self.result and self.result.get("status") == "ok" else ""
         if current or not self.app.workspace: self.client.set(current)
 
+    def open_client(self, target):
+        """Show ``target``'s drift: choose it in the picker and connect to its workspace."""
+        if target not in self.targets: self.fill_clients()
+        self.app.show_page("rules"); self.app.rule_view.set("drift")
+        self.client.set(target); self.client_chosen()
+
+    def all_clients(self):
+        """Read every enabled client's rules in the background, then show their drift counts."""
+        app, library = self.app, self.app.catalog_page.snapshot
+        if not app.session or not app.subscriptions_listed:
+            app.flash("Sign in on Connect first, with the account that reaches the clients.", "warning", 5); return
+        if library is None:
+            app.flash("Load the rule library first.", "warning", 4); return
+        count = sum(1 for client in library["clients"] if client.get("state") == "Enabled")
+        app.work(f"Reading the rules of {count} client workspaces…", lambda: fleet(library, app.session),
+                 lambda rows: FleetDialog(app, rows), page="rules", failed="Couldn't read the client workspaces")
+
     def client_chosen(self, event=None):
         target = self.targets.get(self.client.get())
         if not target: return
@@ -355,6 +378,7 @@ class DriftPage:
         idle = not self.app.busy
         self.action_button.configure(state="normal" if idle else "disabled")
         self.client_box.configure(state="readonly" if idle and self.targets and self.app.session else "disabled")
+        self.fleet_button.configure(state="normal" if idle and self.targets and self.app.session else "disabled")
         self.refresh_button.configure(state="normal" if idle and self.app.rules_page.ready() else "disabled")
         self.library_button.configure(state="normal" if idle and self.app.catalog_page.source.get().strip() else "disabled")
 
