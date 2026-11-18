@@ -209,10 +209,11 @@ def load_local(folder):
 class GitHubReader:
     """Temporary CLI authentication adapter. All network requests are explicit GETs."""
     def __init__(self, request=None, cache=None):
-        """``cache``: a folder for fetched files; by default the app's own (blob_cache()) when it reads GitHub
-        itself, and none when a test or caller supplies ``request``."""
+        """``cache``: a folder for fetched files, by default the app's own (blob_cache()) for every reader: the
+        library view, Assign, Preview, Find duplicates and review submissions each read the whole library, and
+        without the cache each read cost a request per file (about 1,650). ``cache=False`` reads without it."""
         self.request = request or self.get
-        self.cache = cache if cache is not None else (None if request else blob_cache())
+        self.cache = blob_cache() if cache is None else (cache or None)
 
     @staticmethod
     def get(endpoint):

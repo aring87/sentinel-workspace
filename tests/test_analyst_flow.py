@@ -155,8 +155,13 @@ class AnalystFlowTests(unittest.TestCase):
             import base64
             return {"encoding": "base64", "content": base64.b64encode(files[endpoint.split("/git/blobs/")[1]]).decode()}
         seen = []
-        GitHubReader(request).load("example/detections", lambda done, total: seen.append((done, total)))
+        GitHubReader(request, cache=False).load("example/detections", lambda done, total: seen.append((done, total)))
         self.assertEqual(sorted(seen), [(1, 2), (2, 2)])
+
+    def test_every_reader_uses_the_cache_unless_told_not_to(self):
+        from sentinel_app import repository_catalog
+        self.assertEqual(GitHubReader(lambda endpoint: {}).cache, repository_catalog.blob_cache())
+        self.assertIsNone(GitHubReader(lambda endpoint: {}, cache=False).cache)
 
     def test_a_second_github_read_fetches_only_new_or_changed_files(self):
         import base64, tempfile
