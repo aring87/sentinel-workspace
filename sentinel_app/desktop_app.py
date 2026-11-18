@@ -226,6 +226,7 @@ class App:
         self.subscription_index = -1  # The subscription chosen last, restored when a choice must wait.
         self.workspaces = []
         self.workspace = None
+        self.wanted_workspace = None  # A workspace ID to select when the next workspace list arrives (Drift's client picker).
         self.clientfile = DATA / "clients.json"
         self.settingsfile = DATA / "settings.json"
         self.startup_notes = []
@@ -1865,10 +1866,15 @@ class App:
             self.workspaces = rows
             self.sync_connection()
             self.wsbox.configure(values=[r["workspace_name"] + "  ·  " + r["resource_group"] for r in rows])
+            wanted, self.wanted_workspace = self.wanted_workspace, None
+            if wanted and not any(r["workspace_id"].lower() == wanted for r in rows):
+                self.flash("That client's workspace isn't in its subscription for this sign-in. Check the target file "
+                           "or the Lighthouse delegation.", "warning", 6)
             if rows:
-                # The workspace this client used last time, or the first one.
+                # The workspace a picker asked for, else the one this client used last time, else the first one.
                 remembered = self.remembered_workspace().get("workspace_id")
-                chosen = next((i for i, r in enumerate(rows) if r["workspace_id"] == remembered), 0)
+                chosen = next((i for i, r in enumerate(rows) if wanted and r["workspace_id"].lower() == wanted),
+                              next((i for i, r in enumerate(rows) if r["workspace_id"] == remembered), 0))
                 self.wsbox.current(chosen); self.workspace_changed()
                 count = len(rows)
                 self.flash(f"Found {count} workspace{'s' if count != 1 else ''} in this subscription. "
@@ -1878,6 +1884,26 @@ class App:
                 self.status.set("No workspaces in this subscription. Choose another subscription, or check your access.")
         self.work("Loading workspaces…", lambda: self.session.discover(sub["id"], sub["tenantId"]), done,
                   failed="Couldn't load workspaces")
+
+    def connect_target(self, target):
+        """Connect to a library target's workspace with the current sign-in (Lighthouse delegation reaches every
+        client from the managing tenant): select its subscription, then its workspace once listed. Returns why it
+        can't, or None once it has started."""
+        if self.busy: return "Wait for the current task to finish."
+        if not self.session or not self.subscriptions_listed:
+            return "Sign in on Connect first, with the account that reaches the clients (ISI's managing tenant)."
+        azure = (target.get("raw") or {}).get("azure") or {}
+        subscription = str(azure.get("subscription_id") or "").lower()
+        workspace = str(azure.get("workspace_id") or "").lower()
+        index = next((i for i, row in enumerate(self.subscriptions) if row["id"].lower() == subscription), None)
+        if index is None:
+            return (target["target"] + "'s subscription isn't visible to this sign-in. Check its Lighthouse delegation, "
+                    "or sign in to the tenant that can reach it.")
+        if self.workspace and self.workspace["workspace_id"].lower() == workspace: return None  # Already connected.
+        self.wanted_workspace = workspace or None
+        self.subbox.current(index)
+        self.subscription_changed()
+        return None
 
     def remembered_workspace(self):
         """The subscription and workspace this client used last ({} when none), from ui-state.json."""

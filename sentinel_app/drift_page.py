@@ -224,6 +224,16 @@ class DriftPage:
         self.key_button.pack(side="right", padx=(0, px(8)))
         kit.tooltip(self.key_button, "What each kind of drift means, and the step that fixes it")
         body = card.body
+        # Any client in the library, read with the current sign-in: Lighthouse reaches every delegated workspace.
+        picker = ttk.Frame(body, style="Card.TFrame"); picker.pack(fill="x", pady=(0, px(10)))
+        ttk.Label(picker, text="Client", style="Card.TLabel").pack(side="left", padx=(0, px(8)))
+        self.client = tk.StringVar()
+        self.client_box = ttk.Combobox(picker, textvariable=self.client, values=[], state="readonly", width=48)
+        self.client_box.pack(side="left")
+        self.client_box.bind("<<ComboboxSelected>>", self.client_chosen)
+        kit.tooltip(self.client_box, "Compare another client: connects to its workspace with your current sign-in "
+                                     "(through Lighthouse) and reads its rules")
+        self.targets = {}  # Target name -> library client row, for the picker.
         bar = ttk.Frame(body, style="Card.TFrame"); bar.pack(fill="x", pady=(0, px(12)))
         bar.columnconfigure(0, weight=1)
         self.search, self.filter = tk.StringVar(), tk.StringVar(value="all")
@@ -302,11 +312,30 @@ class DriftPage:
             return ("Load the rule library to compare it with " + name + ". " + text, action, False)
         return None
 
+    def fill_clients(self):
+        """The picker lists the library's enabled targets, and shows the one the connected workspace belongs to."""
+        library = self.app.catalog_page.snapshot
+        clients = [client for client in (library or {}).get("clients", []) if client.get("state") == "Enabled"]
+        self.targets = {client["target"]: client for client in clients}
+        names = sorted(self.targets, key=str.casefold)
+        if list(self.client_box.cget("values")) != names: self.client_box.configure(values=names)
+        current = self.result["client"]["target"] if self.result and self.result.get("status") == "ok" else ""
+        if current or not self.app.workspace: self.client.set(current)
+
+    def client_chosen(self, event=None):
+        target = self.targets.get(self.client.get())
+        if not target: return
+        problem = self.app.connect_target(target)
+        if problem:
+            self.fill_clients()  # Back to the client actually connected.
+            self.app.flash(problem, "warning", 6)
+
     def update(self):
         """Compare again: the workspace rules, the rule library or the workspace changed."""
         rules, library = self.app.rules_page, self.app.catalog_page
         self.blocked = self.blocker()
         self.result = None if self.blocked else drift(library.snapshot, rules.rows, rules.loaded_workspace)
+        self.fill_clients()
         self.entries = self.result["entries"] if self.result else []
         self.cache, self.shown = [(values, " ".join(values + (entry["id"],)).casefold())
                                   for entry, values in ((entry, row_values(entry)) for entry in self.entries)], -1
@@ -325,6 +354,7 @@ class DriftPage:
         """Refresh needs a workspace; Refresh library needs a library source."""
         idle = not self.app.busy
         self.action_button.configure(state="normal" if idle else "disabled")
+        self.client_box.configure(state="readonly" if idle and self.targets and self.app.session else "disabled")
         self.refresh_button.configure(state="normal" if idle and self.app.rules_page.ready() else "disabled")
         self.library_button.configure(state="normal" if idle and self.app.catalog_page.source.get().strip() else "disabled")
 

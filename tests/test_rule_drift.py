@@ -169,6 +169,37 @@ class DriftPageTests(unittest.TestCase):
     def labels(self):
         return [self.page.filter_bar.items[value].cget("text") for value in self.page.filter_bar.order]
 
+    def test_client_picker_lists_targets_and_connects_to_the_chosen_one(self):
+        far = "34343434-3434-4343-8343-343434343434"
+        extra = {"clients/far/far-primary.yml": target_file(
+            "far-primary", dict(tenant_id=MANAGING, subscription_id="56565656-5656-4565-8565-565656565656",
+                                resource_group="rg-far", workspace_name="law-far", workspace_id=far.upper()),
+            [dict(path="rules/sentinel/a.yml")])}
+        self.connect(); self.open(); self.load_library(library(extra=extra))
+        self.assertEqual(list(self.page.client_box.cget("values")), ["acme-primary", "bluestone-primary", "far-primary"])
+        self.assertEqual(self.page.client.get(), "acme-primary")  # The connected workspace's target.
+        app = self.app
+        app.subscriptions = [dict(id="56565656-5656-4565-8565-565656565656", tenantId=MANAGING, name="Far")]
+        app.subscriptions_listed = True
+        app.subbox.configure(values=["Far"])
+        # A target whose subscription this sign-in can't see: a warning, and the picker goes back.
+        with patch.object(app, "flash") as flash:
+            self.page.client.set("bluestone-primary"); self.page.client_chosen()
+        self.assertIn("isn't visible to this sign-in", flash.call_args[0][0])
+        self.assertEqual(self.page.client.get(), "acme-primary")
+        # A reachable target: its subscription is chosen, and its workspace once the list arrives.
+        with patch.object(app, "subscription_changed") as changed:
+            self.page.client.set("far-primary"); self.page.client_chosen()
+        changed.assert_called_once_with()
+        self.assertEqual((app.subbox.current(), app.wanted_workspace), (0, far))
+        rows = [dict(workspace_id="77777777-7777-4777-8777-777777777777", workspace_name="law-other", resource_group="rg"),
+                dict(workspace_id=far, workspace_name="law-far", resource_group="rg-far", subscription_id="s", tenant_id=MANAGING)]
+        with patch.object(app, "work", side_effect=lambda title, task, done, **kw: done(rows)), \
+             patch.object(app, "workspace_changed") as chosen, patch.object(app, "flash"):
+            app.discover()
+        self.assertEqual(app.wsbox.current(), 1)  # The target's workspace, not the first one.
+        self.assertIsNone(app.wanted_workspace)
+
     def test_explains_what_it_needs_before_comparing(self):
         self.open()
         self.assertIn("Sign in and choose a workspace", self.page.empty.text.get())
