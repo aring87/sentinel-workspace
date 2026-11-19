@@ -88,6 +88,17 @@ class AssignmentDialogTests(unittest.TestCase):
         self.assertIn(' | rules/sentinel/second.yml | Add assignment', text)
         self.assertEqual(str(self.dialog.submit_button.cget('state')), 'normal')
 
+    def test_main_moving_after_check_checks_again_instead_of_sticking(self):
+        self.prepare()
+        self.remote.head = 'e' * 40  # Another request merged between Check and Submit.
+        with patch.object(self.app, 'work', side_effect=self.work):
+            self.dialog.submit(); self.root.update()
+        self.assertFalse(self.remote.writes())
+        self.assertFalse(self.dialog.locked)
+        self.assertEqual(self.dialog.record['plan']['base_sha'], 'e' * 40)  # Checked again against main as it is now.
+        self.assertIn('main changed after Check', self.dialog.notice.get())
+        self.assertEqual(str(self.dialog.submit_button.cget('state')), 'normal')
+
     def test_search_selects_visible_targets_and_keeps_hidden_selection(self):
         self.dialog.search.set('413'); self.dialog.select_shown()
         self.assertEqual(self.dialog.selected, {'413-workspace-commercial'})

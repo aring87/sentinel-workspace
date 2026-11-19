@@ -19,6 +19,10 @@ class ReviewError(ValueError):
     pass
 
 
+# Raised before any write: main moved since the review was prepared, so it must be prepared again.
+BASE_MOVED = "The repository changed after preview. Prepare a fresh review before submitting."
+
+
 def require(condition, message):
     if not condition:
         raise ReviewError(message)
@@ -289,7 +293,7 @@ class ReviewService:
         else:
             require(not record.get("pull_request"), "The previous review branch was removed. Open the recorded pull request instead.")
             latest = self.request("GET", prefix + "/commits/" + quote(plan["base_branch"], safe=""))
-            require(latest["sha"] == plan["base_sha"] and latest["commit"]["tree"]["sha"] == plan["tree_sha"], "The repository changed after preview. Prepare a fresh review before submitting.")
+            require(latest["sha"] == plan["base_sha"] and latest["commit"]["tree"]["sha"] == plan["tree_sha"], BASE_MOVED)
             self.save_record(folder, record)  # Must succeed before any remote write.
             if not record.get("commit_sha"):
                 tree = self.request("POST", prefix + "/git/trees", {
