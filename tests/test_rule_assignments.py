@@ -150,6 +150,32 @@ class AssignmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ReviewError,'changed after preview'):self.service.submit(record,self.folder)
         self.assertFalse(self.remote.writes())
 
+    def test_a_rule_that_lists_its_clients_gains_the_new_ones(self):
+        # The library's CI requires a rule's clients list to name exactly the clients that select it.
+        self.remote.add_client('example',True)
+        raw=self.remote.files[EXISTING].decode().replace('owner:','clients:\n- example\nowner:',1)
+        self.remote.files[EXISTING]=raw.encode()
+        record=self.prepare(['413-workspace-commercial'])
+        files={f['path']:f for f in record['plan']['files']}
+        self.assertEqual(set(files),{EXISTING,'clients/413/413-workspace-commercial.yml'})
+        before,after=parse_yaml(files[EXISTING]['before'].encode()),parse_yaml(files[EXISTING]['content'].encode())
+        self.assertEqual(after['clients'],['example','413'])
+        self.assertEqual({k:v for k,v in after.items() if k!='clients'},{k:v for k,v in before.items() if k!='clients'})
+        self.assertIn("adds 413 to the rule's clients list",'\n'.join(record['plan']['warnings']))
+        self.assertIn('gains the newly assigned ones',self.service.pull_body(record['plan']))
+        assignments.check_record(record)
+        self.service.submit(record,self.folder)  # Rebuilt from the base and published.
+
+    def test_schema_accepts_clients_and_client_rule_template_ids(self):
+        from sentinel_app import rule_schema
+        rule=parse_yaml(self.remote.files[EXISTING])
+        rule_schema.validate(dict(rule,clients=['a','b']),True)
+        for bad in ([],['a','a'],'a',['']):
+            with self.assertRaisesRegex(ValueError,'clients must'):rule_schema.validate(dict(rule,clients=bad),True)
+        same=dict(rule,alertRuleTemplateName=rule['id'].lower())
+        with self.assertRaisesRegex(ValueError,'must not equal'):rule_schema.validate(same,True)
+        rule_schema.validate(same,True,client_rule=True)
+
     def test_prepare_checks_against_main_as_it_is_now(self):
         # The analyst's library is older than main (an assignment merged since): no refresh is needed.
         record=self.service.prepare(REPO,'f'*40,EXISTING,['413-workspace-commercial'])

@@ -130,13 +130,19 @@ def check_record(record):
             and all(e.get("path") in RULE_WORKFLOWS and e.get("mode") in ("100644", "100755")
                     and isinstance(e.get("content"), str) for e in extras),
             "Review request changes files other than the rule and its deploy lists.")
-    rule_schema.validate(parse_yaml(plan["content"].encode()), plan["allow_missing_mitre"])
+    rule_schema.validate(parse_yaml(plan["content"].encode()), plan["allow_missing_mitre"],
+                         client_rule=is_client_rule(plan["path"]))
     return plan
 
 
 def load_request(path):
     record = json.loads(read_bounded(path)); check_record(record)
     return record
+
+
+def is_client_rule(path):
+    """A rule under rules/sentinel/clients/ deploys only to its own client(s) (the pipeline's is_client_rule)."""
+    return isinstance(path, str) and path.startswith("rules/sentinel/clients/")
 
 
 class ReviewService:
@@ -146,7 +152,7 @@ class ReviewService:
     def prepare(self, repository, path, content, allow_missing_mitre=False, source=None, progress=None):
         check_path(path)
         rule = parse_yaml(content.encode("utf-8"))
-        warnings = rule_schema.validate(rule, allow_missing_mitre)
+        warnings = rule_schema.validate(rule, allow_missing_mitre, client_rule=is_client_rule(path))
         rule_schema.to_arm(rule)
         snapshot = GitHubReader(lambda endpoint: self.request("GET", endpoint)).load(repository, progress)
         require(snapshot["private"] is True, "Select the private detection repository, not the public application repository.")
@@ -182,7 +188,8 @@ class ReviewService:
                     effective = rule_schema.apply_overrides(rule, overrides)
                     # Use each target's own migration setting; the editor checkbox cannot authorize it.
                     warnings += [client["target"] + ": " + warning for warning in
-                                 rule_schema.validate(effective, client["raw"].get("allow_missing_mitre") is True)]
+                                 rule_schema.validate(effective, client["raw"].get("allow_missing_mitre") is True,
+                                                      client_rule=is_client_rule(path))]
                     impact.append({"target": client["target"], "target_enabled": client["raw"]["enabled"],
                                    "rule_enabled": effective["enabled"], "overrides": overrides})
         plan = dict(request_id=uuid.uuid4().hex, repository=repository, repository_id=snapshot["repository_id"],

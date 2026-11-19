@@ -294,7 +294,7 @@ class AssignmentDialog(ClientPicker):
             lines += ["  " + path + " | " + state(value) for path, value in states.items()]
         else:
             lines += ["Rule: " + p["rule_path"], "Requested rule state: " + state(p["enabled"])]
-        lines += ["Changed client files: " + str(len(p["files"])), ""]
+        lines += ["Changed files: " + str(len(p["files"])), ""]
         for c in p["impact"]:
             lines.append(c["target"] + " | " + c["workspace"] + (" | " + c["rule"] if "rule" in c else "") + " | "
                          + c["action"] + " | target " + ("enabled" if c["target_enabled"] else "disabled")

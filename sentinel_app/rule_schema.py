@@ -24,6 +24,7 @@ FIELDS = {
     "suppressionDuration", "suppressionEnabled", "eventGroupingSettings",
     "entityMappings", "customDetails", "alertDetailsOverride",
     "alertRuleTemplateName", "templateVersion", "sentinelEntitiesMappings",
+    "clients",  # Repository metadata only, never deployed: the clients that select a shared client rule.
 }
 # Optional ARM properties that are passed through unchanged when they hold a value.
 PASSTHROUGH = ("entityMappings", "customDetails", "alertDetailsOverride",
@@ -75,7 +76,8 @@ def seconds(value):
     return total
 
 
-def validate(r, allow_missing_mitre=False):
+def validate(r, allow_missing_mitre=False, client_rule=False):
+    """client_rule: the rule is under rules/sentinel/clients/, so it deploys only to its own client."""
     if not isinstance(r, dict):
         raise ValueError("Rule must be a YAML mapping")
     unknown = set(r) - FIELDS
@@ -140,11 +142,19 @@ def validate(r, allow_missing_mitre=False):
                              ("sentinelEntitiesMappings", list)):
         if field in r and r[field] is not None and not isinstance(r[field], kind_type):
             raise ValueError(field + " has an invalid type")
+    if "clients" in r:
+        clients = r["clients"]
+        if (not isinstance(clients, list) or not clients or len(set(clients)) != len(clients)
+                or not all(isinstance(c, str) and c for c in clients)):
+            raise ValueError("clients must be a list of distinct client names")
     template_name = r.get("alertRuleTemplateName")
     if template_name is not None:
         if not guid(template_name):
             raise ValueError("alertRuleTemplateName must be a lowercase template GUID")
-        if template_name == r["id"].lower():
+        # Some older portal rules took their template's GUID as their own ID. A baseline rule can't: assigned
+        # to another client it would occupy the template's ID there. A client rule deploys only to the client
+        # that already runs it, so it keeps its live ID.
+        if template_name == r["id"].lower() and not client_rule:
             raise ValueError("alertRuleTemplateName must not equal the rule id")
     if "suppressionDuration" in r:
         seconds(r["suppressionDuration"])
