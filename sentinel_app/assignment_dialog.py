@@ -10,6 +10,7 @@ import webbrowser
 from . import ui_kit as kit
 from .desktop_theme import COLORS, px
 from .rule_assignments import AssignmentService, assignment_diff, plan_states
+from .repository_reviews import BASE_MOVED
 
 PULL_URL = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+")
 MATCH = "As in the workspace"  # Each rule at the state it has live, when Drift's rules differ.
@@ -264,6 +265,11 @@ class AssignmentDialog(ClientPicker):
 
     def work(self, title, task, done):
         def on_error(error):
+            if self.locked and error.startswith(BASE_MOVED) and not (self.record or {}).get("pull_request"):
+                # Nothing was written: another request merged after Check. Check again against main as it is now;
+                # the analyst reviews the new changes and submits them.
+                self.locked = False; self.record = None
+                self.window.after_idle(self.recheck); return
             self.say(error + (" Your request is saved; select Submit for approval again to finish it. Recovery files are in "
                               + str(self.folder) + "." if self.locked else ""), "danger")
         kit.run_in_dialog(self.app, self.window, title, task, done,
@@ -271,12 +277,18 @@ class AssignmentDialog(ClientPicker):
                                     self.submit_button, self.open_button, self.close_button),
                           say=self.say, page="rules", on_error=on_error, after=self.refresh_controls, log_as="Rule assignment:")
 
-    def prepare(self):
+    def recheck(self):
+        """Check again after Submit found main had moved, and say why the review changed."""
+        self.prepare(note="main changed after Check (another request merged), so this was checked again against it. "
+                          "Look over the changes below, then select Submit for approval.")
+
+    def prepare(self, note=None):
         if self.app.busy or self.locked: return
         self.record = None; self.show("")
         targets = sorted(self.selected); states = self.states()
         def done(record):
             self.record = record; self.render_review()
+            if note: self.say(note, "warning")
             fresh = getattr(self.service, "snapshot", None)  # Check read main as it is now.
             if fresh and fresh.get("repository") == self.snapshot.get("repository"):
                 self.snapshot = fresh; self.app.catalog_page.adopt(fresh)
@@ -294,7 +306,7 @@ class AssignmentDialog(ClientPicker):
             lines += ["  " + path + " | " + state(value) for path, value in states.items()]
         else:
             lines += ["Rule: " + p["rule_path"], "Requested rule state: " + state(p["enabled"])]
-        lines += ["Changed client files: " + str(len(p["files"])), ""]
+        lines += ["Changed files: " + str(len(p["files"])), ""]
         for c in p["impact"]:
             lines.append(c["target"] + " | " + c["workspace"] + (" | " + c["rule"] if "rule" in c else "") + " | "
                          + c["action"] + " | target " + ("enabled" if c["target_enabled"] else "disabled")

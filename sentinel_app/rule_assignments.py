@@ -9,7 +9,7 @@ from urllib.parse import quote
 import uuid
 
 from .repository_catalog import GitHubReader, parse_yaml, category, MAX_FILE
-from .repository_reviews import ReviewService, require, fingerprint, check_path
+from .repository_reviews import ReviewService, require, fingerprint, check_path, is_client_rule
 from .rule_drafts import atomic_write
 from . import rule_schema
 
@@ -57,6 +57,37 @@ def update_assignment(before, rule_path, enabled):
     return result
 
 
+def update_clients_tag(before, add):
+    """Add client names to a rule's ``clients`` list (repository metadata the library's CI requires to list
+    exactly the clients that select the rule), proving nothing else in the rule changed."""
+    original = parse_yaml(before.encode('utf-8'))
+    listed = original.get('clients')
+    require(isinstance(listed, list) and all(isinstance(c, str) for c in listed), 'Invalid clients list in rule.')
+    new = [name for name in sorted(set(add)) if name not in listed]
+    if not new: return before
+    expected = copy.deepcopy(original); expected['clients'] = listed + new
+    # Insert the new items after the block list's last one, so no other line is rewrapped or requoted.
+    lines = before.splitlines(True)
+    start = next((i for i, line in enumerate(lines) if re.fullmatch(r'clients:[ \t]*\r?\n?', line)), None)
+    require(start is not None, "Edit the rule's clients list manually: it isn't a plain YAML list.")
+    end, prefix = start + 1, None
+    while end < len(lines):
+        item = re.match(r'([ \t]*- )', lines[end])
+        if not item or (prefix is not None and item.group(1) != prefix): break
+        prefix = item.group(1); end += 1
+    require(prefix is not None, "Edit the rule's clients list manually: it isn't a plain YAML list.")
+    newline = '\r\n' if '\r\n' in before else '\n'
+    if not lines[end - 1].endswith('\n'): lines[end - 1] += newline
+    # Quoted unless it reads back as the same text (413, yes or null would not).
+    plain = lambda name: name if re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', name) and \
+        parse_yaml(('x: ' + name).encode()) == {'x': name} else json.dumps(name)
+    result = ''.join(lines[:end] + [prefix + plain(name) + newline for name in new] + lines[end:])
+    require(parse_yaml(result.encode('utf-8')) == expected,
+            "YAML formatting would change other rule settings. Edit the rule's clients list manually instead.")
+    require(len(result.encode('utf-8')) <= MAX_FILE, 'Updated rule file exceeds the catalog size limit.')
+    return result
+
+
 def validate_target(path, doc, rules):
     require(set(doc) == MANIFEST_KEYS and type(doc['version']) is int and doc['version'] == 1,
             path + ': unsupported target schema.')
@@ -86,7 +117,8 @@ def validate_target(path, doc, rules):
         require(source in rules and source not in paths, 'Missing or duplicate rule selection: '+str(source))
         paths.add(source)
         effective = rule_schema.apply_overrides(rules[source],assignment.get('overrides',{}))
-        warnings += [doc['target']+': '+w for w in rule_schema.validate(effective,doc['allow_missing_mitre'])]
+        warnings += [doc['target']+': '+w for w in rule_schema.validate(effective,doc['allow_missing_mitre'],
+                                                                      client_rule=is_client_rule(source))]
         rule_schema.to_arm(effective)
         require(effective['id'].lower() not in ids, 'Duplicate effective rule ID in '+doc['target'])
         ids.add(effective['id'].lower())
@@ -156,6 +188,18 @@ def changes(snapshot, rules, targets, enabled=False):
         if not doc['enabled']: warnings.append(target+': target remains disabled; assigning a rule does not enable the workspace target.')
         if content!=before: files.append(dict(path=path,mode=entry['mode'],before=before,content=content))
     require(files,'These workspaces already have the requested assignment. No changes to submit.')
+    # A rule that lists its clients must keep listing exactly the clients that select it (the library's CI).
+    names = sorted({clients[target]['name'] for target in targets})
+    for rule_path in states:
+        if 'clients' not in library[rule_path]: continue
+        entry = snapshot['entries'].get(rule_path,{})
+        require(entry.get('type')=='blob' and entry.get('mode') in ('100644','100755'), 'Unsupported rule file: '+rule_path)
+        before = snapshot['files'][rule_path].decode('utf-8')
+        content = update_clients_tag(before, names)
+        if content != before:
+            files.append(dict(path=rule_path,mode=entry['mode'],before=before,content=content))
+            added = sorted(set(parse_yaml(content.encode('utf-8'))['clients']) - set(library[rule_path]['clients']))
+            warnings.append(rule_path+': adds '+', '.join(added)+" to the rule's clients list.")
     return files,impact,sorted(set(warnings))
 
 
@@ -177,8 +221,10 @@ def check_record(record):
         require(re.fullmatch(r'[0-9a-f]{40}',record['commit_sha']),'Invalid saved commit.')
     plan_states(p)
     require(isinstance(p['files'],list) and 0<len(p['files'])<=100,'Invalid assignment changes.')
-    for f in p['files']:
-        require(category(f['path'])=='clients' and f['mode'] in ('100644','100755'),'Invalid client file.')
+    rules = set(plan_states(p))
+    for f in p['files']:  # Client files, and a selected rule's file for its clients list.
+        require((category(f['path'])=='clients' or f['path'] in rules) and f['mode'] in ('100644','100755'),
+                'Invalid client file.')
         require(isinstance(f['before'],str) and isinstance(f['content'],str),'Invalid file content.')
     require(len((json.dumps(record,indent=2)+'\n').encode())<=MAX_REQUEST,'Assignment request is too large; select fewer workspaces.')
     return p
@@ -264,7 +310,9 @@ class AssignmentService(ReviewService):
                   'Requested rule state: '+state(plan['enabled'])+'. ')
         return ((note.strip()+'\n\n' if note and note.strip() else '')+what+
                 'Existing overrides are preserved except for the explicitly reviewed enabled value. '
-                'Workspace enablement, Azure destinations and the shared rule file are unchanged.\n\n'
+                'Workspace enablement and Azure destinations are unchanged. '
+                +('A rule that lists its clients gains the newly assigned ones; nothing else in it changes.\n\n'
+                  if any(f['path'] in states for f in plan['files']) else 'The shared rule file is unchanged.\n\n')
                 +'\n'.join('- '+c['target']+(' · `'+c['rule']+'`' if several else '')+': '+c['action'] for c in plan['impact'])
                 +'\n\nRepository CI and human review remain required. After merge, refresh the catalog, '
                 'preview the selected rule, and use the separate reviewed deployment flow. '
