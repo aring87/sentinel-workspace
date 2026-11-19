@@ -145,11 +145,16 @@ class AssignmentTests(unittest.TestCase):
         with self.assertRaises(ReviewError): self.service.prepare(REPO,'a'*40,{EXISTING:'yes'},['413-workspace-commercial'])
         with self.assertRaises(ReviewError): self.service.prepare(REPO,'a'*40,[EXISTING,'rules/sentinel/gone.yml'],['413-workspace-commercial'])
 
-    def test_stale_catalog_or_base_stops_before_writes(self):
+    def test_stale_base_stops_before_writes(self):
         record=self.prepare();self.remote.head='e'*40
-        with self.assertRaisesRegex(ReviewError,'changed'):self.prepare()
         with self.assertRaisesRegex(ReviewError,'changed after preview'):self.service.submit(record,self.folder)
         self.assertFalse(self.remote.writes())
+
+    def test_prepare_checks_against_main_as_it_is_now(self):
+        # The analyst's library is older than main (an assignment merged since): no refresh is needed.
+        record=self.service.prepare(REPO,'f'*40,EXISTING,['413-workspace-commercial'])
+        self.assertEqual(record['plan']['base_sha'],'a'*40)
+        self.assertEqual(self.service.snapshot['revision'],'a'*40)
 
     def test_recovery_after_lost_branch_or_pr_response_is_idempotent(self):
         for suffix in ('/git/refs','/pulls'):

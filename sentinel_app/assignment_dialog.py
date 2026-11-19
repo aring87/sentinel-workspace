@@ -275,7 +275,11 @@ class AssignmentDialog(ClientPicker):
         if self.app.busy or self.locked: return
         self.record = None; self.show("")
         targets = sorted(self.selected); states = self.states()
-        def done(record): self.record = record; self.render_review()
+        def done(record):
+            self.record = record; self.render_review()
+            fresh = getattr(self.service, "snapshot", None)  # Check read main as it is now.
+            if fresh and fresh.get("repository") == self.snapshot.get("repository"):
+                self.snapshot = fresh; self.app.catalog_page.adopt(fresh)
         self.work("Comparing client files with the rule library. Nothing is sent to GitHub yet…",
                   lambda: self.service.prepare(self.snapshot["repository"], self.snapshot["revision"], states, targets),
                   done)
