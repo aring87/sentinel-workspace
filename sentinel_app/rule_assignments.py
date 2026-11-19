@@ -203,12 +203,17 @@ class AssignmentService(ReviewService):
     save_record=staticmethod(save_request)
 
     def prepare(self,repository,revision,rules,targets,enabled=False):
-        """``rules`` is one rule path, a list of paths (all at ``enabled``) or {path: enabled}."""
+        """``rules`` is one rule path, a list of paths (all at ``enabled``) or {path: enabled}.
+
+        The edits are made against main as it is now, read here, not at ``revision`` (the library the
+        analyst last loaded): an assignment merged since then only moves main, and the review shows the
+        base it was checked against. The fresh read is kept as ``self.snapshot`` so the app can show it
+        without reading the library again."""
         states=rule_states(rules,enabled)
         snapshot=GitHubReader(lambda endpoint:self.request('GET',endpoint)).load(repository)
         require(snapshot['private'] is True and snapshot['can_push'] is True,'Use a private detection repository with GitHub write access.')
         require(snapshot['base_branch']=='main','Assignment reviews require main as the default branch.')
-        require(snapshot['revision']==revision,'The repository changed. Refresh the catalog before assigning rules.')
+        self.snapshot=snapshot; revision=snapshot['revision']
         files,impact,warnings=changes(snapshot,states,targets)
         names={r['path']:r['name'] for r in snapshot['rules']}
         first=next(iter(states)); values=set(states.values())

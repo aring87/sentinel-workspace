@@ -693,6 +693,16 @@ class CatalogPage:
             self.app.flash("Rule library loaded.")
         self.app.work("Reading the rule library…", task, done, page="rules", failed="Couldn't read the rule library")
 
+    def adopt(self, snapshot):
+        """Show a newer read of the same GitHub library made elsewhere (an assignment's Check reads main
+        fresh), so the analyst needn't select Refresh library and spend the requests again."""
+        current = self.snapshot
+        if (self.loading or not current or not snapshot or current.get("repository") != snapshot.get("repository")
+                or current.get("revision") == snapshot.get("revision")): return
+        self.snapshot = snapshot; self.index(); self.render()  # Render compares the drift view again.
+        self.loaded(snapshot, snapshot["source"].split(" / ")[0])
+        self.app.log("Library revision: " + str(snapshot["revision"]))
+
     def loaded(self, snapshot, where):
         """Fold the source card down to where the library came from and when."""
         identity = snapshot.get("identity")
