@@ -245,7 +245,7 @@ class DriftPageTests(unittest.TestCase):
         self.assertEqual(self.rows(), [
             ("Charlie", "Missing from workspace", "Disabled · Low", "—"),
             ("Bravo", "Severity differs", "Enabled · High", "Enabled · Medium"),
-            ("Advanced multistage attack", "Not in library", "—", "Enabled · High"),
+            ("Advanced multistage attack", "Not in library (built-in)", "—", "Enabled · High"),
             ("Delta", "Not assigned here", "—", "Enabled · Low")])
         self.assertEqual(self.labels(), ["All 4", "Missing 1", "Different 1", "Only in workspace 2"])
         self.assertIn("acme-primary's baseline, against law-example-sentinel", self.page.summary.get())
@@ -427,7 +427,10 @@ class DriftPageTests(unittest.TestCase):
         keyed = {label for _, labels, *_ in drift_page.KEY for label in labels}
         wordings = {drift_page.drift_text(dict(kind=MISSING)),
                     drift_page.drift_text(dict(kind=LIVE_ONLY, rule={"path": "x"})),
-                    drift_page.drift_text(dict(kind=LIVE_ONLY, rule=None))}
+                    drift_page.drift_text(dict(kind=LIVE_ONLY, rule=None)),
+                    drift_page.drift_text(dict(kind=LIVE_ONLY, rule=None, live={"kind": "Fusion"}))}
+        self.assertEqual(drift_page.drift_text(dict(kind=LIVE_ONLY, rule=None, live={"kind": "Scheduled"})),
+                         "Not in library")  # Made in the portal: no mark, and Add to library is offered.
         for fields in (["State"], ["Severity"], ["State", "Severity"]):
             wordings.add(drift_page.drift_text(dict(kind=DIFFERENT, differences=[(f, "a", "b") for f in fields])))
         self.assertEqual(wordings, keyed)

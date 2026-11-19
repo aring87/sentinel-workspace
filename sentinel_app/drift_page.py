@@ -53,13 +53,13 @@ KEY = (
      (("What it means", "In the library and workspace, but not in this client's file, so GitHub doesn't manage it."),
       ("Usually because", "Deployed outside this client's file, or removed from the file after it was deployed.")),
      ("Assign to this client…", "adds it to the client's file. Ctrl-click rules to assign several together.")),
-    (LIVE_ONLY, ("Not in library",), "Not in library",
+    (LIVE_ONLY, ("Not in library", "Not in library (built-in)"), "Not in library",
      (("What it means", "Only in the workspace: the library has no rule with its ID, so GitHub doesn't manage it."),
       ("Usually because", "Made in the portal, or turned on from Content hub.")),
      ("Add to library…", "opens it in the Rule builder as a new library rule."),
      # live_rules.why_not: only Scheduled and NRT rules with a GUID for an ID convert.
      ("Exception", "Only Scheduled and NRT rules whose ID is a GUID can be added. Fusion, ML behavior analytics, "
-                   "threat intelligence and incident-creation rules stay in the portal.")),
+                   "threat intelligence and incident-creation rules are marked (built-in) and stay in the portal.")),
 )
 KEY_NOTES = ("Rules that match the library aren't listed. The line under Rule drift counts them as in step.",
              "Only the enabled state and severity count as drift. Other differences show in Drift details but "
@@ -160,7 +160,10 @@ def side_text(state_text, severity):
 def drift_text(entry):
     """The Drift column: what is out of step, in a few words."""
     if entry["kind"] == MISSING: return "Missing from workspace"
-    if entry["kind"] == LIVE_ONLY: return "Not assigned here" if entry["rule"] else "Not in library"
+    if entry["kind"] == LIVE_ONLY:
+        if entry["rule"]: return "Not assigned here"
+        # Fusion, incident-creation and the other rules Microsoft runs: they stay in the portal.
+        return "Not in library (built-in)" if (entry.get("live") or {}).get("kind") in live_rules.PLATFORM else "Not in library"
     fields = [field for field, *_ in entry["differences"]]
     return "State and severity differ" if len(fields) > 1 else fields[0] + " differs"
 
