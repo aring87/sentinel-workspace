@@ -87,10 +87,13 @@ RULE_DEFAULTS = ("All selected rules", "No additional rule")   # rule_path's def
 
 
 def rule_option_names(paths):
-    """Rule dropdown entries: each library file's name without folder or extension, A-Z."""
+    """Rule dropdown entries: each library file's name without folder or extension, A-Z. Client rules
+    (rules/sentinel/clients/) are left out, as the library's target_matrix.rule_names does: they deploy with
+    their client's selected rules, and over a thousand of them would swamp the dropdowns."""
     names = {}
     for path in sorted(paths):
         if not path.startswith("rules/sentinel/") or not path.endswith((".yml", ".yaml")): continue
+        if path.startswith("rules/sentinel/clients/"): continue
         name = path.rsplit("/", 1)[1].rsplit(".", 1)[0]
         require(name not in names, "Another rule already uses the file name " + name + " (" + names.get(name, "") +
                 "). Choose a different file name.")

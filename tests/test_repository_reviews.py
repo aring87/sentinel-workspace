@@ -275,6 +275,18 @@ class RuleDropdownTests(unittest.TestCase):
                                       {"repository": REPO, "revision": self.remote.head, "path": EXISTING})
         self.assertNotIn("extra_files", record["plan"])
 
+    def test_client_rules_stay_out_of_the_dropdowns(self):
+        # As the library's target_matrix.rule_names: client rules deploy with their client's selected rules.
+        client = dict(valid_form(), id="1234abcd-1111-4111-8111-111111111111", name="Acme-only synthetic detection")
+        self.remote.files["rules/sentinel/clients/acme/acme-only-1234abcd.yml"] = drafts.validated_yaml(client)[0].encode()
+        form = copy.deepcopy(self.remote.original); form["name"] = "Updated synthetic detection"
+        record = self.service.prepare(REPO, EXISTING, drafts.validated_yaml(form)[0], form["allow_missing_mitre"],
+                                      {"repository": REPO, "revision": self.remote.head, "path": EXISTING})
+        self.assertNotIn("extra_files", record["plan"])  # An edited baseline rule leaves the workflows alone.
+        record = self.new()
+        self.assertEqual(record["plan"]["extra_files"][0]["content"], workflow_text(["example", "new-rule"]))
+        self.assertNotIn("extra_files", self.new("rules/sentinel/clients/acme/new-client-rule.yml")["plan"])
+
     def test_a_repository_without_dropdowns_is_unchanged(self):
         self.remote.files[WORKFLOW] = b"on: push\r\njobs: {}\r\n"
         self.assertNotIn("extra_files", self.new()["plan"])
