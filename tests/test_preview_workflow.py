@@ -72,6 +72,22 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(record["plan"]["targets"], ["example-primary"])
         self.assertEqual(record["plan"]["batches"], [{"mode": "preview", "rule_path": EXISTING, "targets": "example-primary"}])
 
+    def test_the_librarys_rule_dropdowns_get_the_rule_name_and_their_defaults(self):
+        # detection-as-code #168: rule_path is a dropdown of rule file names, with rule_2 and rule_3 beside it.
+        flow = workflow(["example-primary"]); inputs = flow["on"]["workflow_dispatch"]["inputs"]
+        inputs["rule_path"] = dict(type="choice", default="All selected rules", options=["All selected rules", "example"])
+        for key in ("rule_2", "rule_3"):
+            inputs[key] = dict(type="choice", default="No additional rule", options=["No additional rule", "example"])
+        self.assertEqual(input_batches(flow, ["example-primary"], EXISTING), [
+            {"mode": "preview", "rule_path": "example", "rule_2": "No additional rule", "rule_3": "No additional rule",
+             "target": "example-primary", "target_2": "Select a client"}])
+        with self.assertRaisesRegex(ReviewError, "Client rules aren't in the workflow's rule dropdown"):
+            input_batches(flow, ["example-primary"], "rules/sentinel/clients/acme/other.yml")
+        with self.assertRaisesRegex(ReviewError, "doesn't list other"):
+            input_batches(flow, ["example-primary"], "rules/sentinel/baseline/other.yml")
+        self.remote.files[WORKFLOW_PATH] = json.dumps(flow).encode()
+        self.assertEqual(self.prepare()["plan"]["batches"][0]["rule_path"], "example")
+
     def test_dropdown_batches_never_use_all_clients_sentinel(self):
         targets = self.remote.clients(5)
         self.remote.files[WORKFLOW_PATH] = json.dumps(workflow(targets)).encode()

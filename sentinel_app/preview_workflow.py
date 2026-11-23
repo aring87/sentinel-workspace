@@ -3,7 +3,7 @@ import base64
 import copy
 from datetime import datetime, timezone
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
@@ -44,6 +44,28 @@ def eligible_clients(snapshot, rule_path):
             any(a["path"] == rule_path for a in c["assignments"])]
 
 
+def rule_inputs(inputs, rule_path):
+    """The workflow's rule inputs for one rule: a rule_path text input takes the path; a rule_path dropdown
+    (the library's since #168) takes the rule's file name, which its target_matrix.py maps back to the path,
+    and any further rule dropdowns (rule_2, rule_3) stay at their defaults so only this rule runs."""
+    rule = inputs.get("rule_path", {})
+    if rule.get("type") == "string": return {"rule_path": rule_path}
+    require(rule.get("type") == "choice", "The workflow needs a rule_path input.")
+    name = PurePosixPath(rule_path).stem
+    if name not in rule.get("options", []):
+        require(not rule_path.startswith("rules/sentinel/clients/"),
+                "Client rules aren't in the workflow's rule dropdown: they deploy with their client's selected rules. "
+                "Run the workflow for that client from GitHub instead.")
+        require(False, "The workflow's rule dropdown doesn't list " + name + ". Sync its rule choices, then refresh the catalog.")
+    values = {"rule_path": name}
+    for key in sorted(k for k in inputs if re.fullmatch(r"rule_[2-9]", k)):
+        extra = inputs[key]
+        require(extra.get("type") == "choice" and extra.get("default") in extra.get("options", []),
+                "Workflow inputs changed. Update this app's workflow adapter before running workflows.")
+        values[key] = extra["default"]
+    return values
+
+
 def input_batches(workflow, targets, rule_path, mode="preview"):
     require(mode in ("preview", "deploy"), "Unsupported workflow mode.")
     event = workflow.get("on", {}).get("workflow_dispatch")
@@ -52,20 +74,20 @@ def input_batches(workflow, targets, rule_path, mode="preview"):
     require(isinstance(inputs, dict) and all(isinstance(v, dict) for v in inputs.values()), "Invalid workflow inputs.")
     mode_input, rule = inputs.get("mode", {}), inputs.get("rule_path", {})
     require(mode_input.get("type") == "choice" and mode in mode_input.get("options", []), f"The workflow needs a {mode} mode choice.")
-    require(rule.get("type") == "string", "The workflow needs a rule_path string input.")
+    rules = rule_inputs(inputs, rule_path)
     slots = sorted([k for k in inputs if k == "target" or re.fullmatch(r"target_[2-9][0-9]*|target_1[0-9]+", k)],
                    key=lambda k: 1 if k == "target" else int(k.split("_")[1]))
     if "targets" in inputs:
         require(not slots and inputs["targets"].get("type") == "string", "Unsupported target input combination.")
-        allowed = {"targets", "mode", "rule_path"}
-        batches = [{"mode": mode, "rule_path": rule_path, "targets": ",".join(targets)}]
+        allowed = {"targets", "mode", *rules}
+        batches = [{"mode": mode, **rules, "targets": ",".join(targets)}]
     else:
         require(slots and slots[0] == "target" and len(slots) <= 25, "No supported client selection inputs found.")
         require(all(inputs[k].get("type") == "choice" for k in slots), "Client slots must be dropdown choices.")
-        allowed = {*slots, "mode", "rule_path"}
+        allowed = {*slots, "mode", *rules}
         batches = []
         for offset in range(0, len(targets), len(slots)):
-            values = {"mode": mode, "rule_path": rule_path}
+            values = {"mode": mode, **rules}
             chunk = targets[offset:offset + len(slots)]
             for i, key in enumerate(slots):
                 value = chunk[i] if i < len(chunk) else "Select a client"
